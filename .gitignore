@@ -1,0 +1,43 @@
+# Dependencies and builds
+node_modules/
+.next/
+out/
+build/
+dist/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# Secrets: never commit real environment files (only .env.example)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+service-account*.json
+*credentials*.json
+
+# Local database, dumps and personal data
+.data/
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.sql.gz
+backups/
+uploads/
+captures/
+
+# Logs and test output
+*.log
+npm-debug.log*
+tests/e2e/screenshots/
+.vercel/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
