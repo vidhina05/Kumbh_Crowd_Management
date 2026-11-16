@@ -12,11 +12,33 @@ const base64Key32 = z
   .string()
   .refine((v) => {
     try {
-      return Buffer.from(v, "base64").length === 32;
+      return /^[A-Za-z0-9+/]{43}=$/.test(v) && Buffer.from(v, "base64").length === 32;
     } catch {
       return false;
     }
-  }, "must be 32 random bytes, base64-encoded (run: openssl rand -base64 32)");
+  }, "must be 32 random bytes, base64-encoded: 44 characters ending in = (run: openssl rand -base64 32)");
+
+/**
+ * Values pasted into hosting dashboards often carry stray spaces, line breaks or quotes, and blank optional
+ * fields arrive as "". Tidy those before validating so a blank optional setting means "not set".
+ * Nothing is invented: a missing or malformed required secret still stops the app.
+ */
+/** Settings where an empty value is a real choice ("none"), not "unset". */
+const BLANK_MEANS_NONE = new Set(["MFA_REQUIRED_ROLES"]);
+
+function tidyEnv(raw: NodeJS.ProcessEnv): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (v === undefined) continue;
+    let t = v.trim();
+    if (t.length >= 2 && ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'")))) t = t.slice(1, -1).trim();
+    out[k] = t === "" && !BLANK_MEANS_NONE.has(k) ? undefined : t;
+  }
+  // On Vercel, fall back to the project's production address when APP_URL isn't set.
+  if (!out.APP_URL && out.VERCEL_PROJECT_PRODUCTION_URL) out.APP_URL = `https://${out.VERCEL_PROJECT_PRODUCTION_URL}`;
+  else if (out.APP_URL && !/^https?:\/\//.test(out.APP_URL)) out.APP_URL = `https://${out.APP_URL}`;
+  return out;
+}
 
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -71,7 +93,7 @@ let cached: Env | null = null;
 
 export function env(): Env {
   if (cached) return cached;
-  const parsed = schema.safeParse(process.env);
+  const parsed = schema.safeParse(tidyEnv(process.env));
   if (!parsed.success) {
     const problems = parsed.error.issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`Invalid configuration. Fix these environment variables (see .env.example):\n${problems}`);
