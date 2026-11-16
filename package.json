@@ -12,7 +12,7 @@
     "build": "node scripts/copy-models.mjs && next build",
     "start": "next start",
     "vercel-build": "node scripts/copy-models.mjs && tsx --conditions=react-server scripts/migrate.ts && tsx --conditions=react-server scripts/seed.ts --no-kiosk && next build",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node scripts/gen-demo.mjs && tsc --noEmit",
     "lint:secrets": "node scripts/check-secrets.mjs",
     "test": "vitest run",
     "test:e2e": "node tests/e2e/run.mjs",
