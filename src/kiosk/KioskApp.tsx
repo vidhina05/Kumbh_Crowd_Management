@@ -442,7 +442,7 @@ export default function KioskApp() {
       }
       silent.current = 0;
       const hit = LANGUAGES.find((L) => alts.some((a) => a.includes(L.native.toLowerCase()) || a.includes(L.english.toLowerCase())));
-      if (hit && (screen === "welcome" || screen === "allLangs")) { setLang(hit.code); return; }
+      if (hit && hit.code !== lang && (screen === "welcome" || screen === "allLangs")) { setLang(hit.code); return; }
       const root = document.querySelector<HTMLElement>(".k-body");
       const r = root ? await answerByVoice(root, alts) : { kind: "none" as const };
       if (r.kind === "none") {
