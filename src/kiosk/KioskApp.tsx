@@ -1,10 +1,10 @@
 "use client";
-import { IS_DEMO, withBase } from "@/shared/base";
+import { BASE_PATH, IS_DEMO, withBase } from "@/shared/base";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
 import "./kiosk.css";
 import { ApiError, clearCreds, flushOutbox, kioskFetch, loadCreds, queue, saveCreds, type KioskCreds } from "./api";
-import { browserVoiceFor, speak, stopSpeaking } from "./voice";
+import { browserVoiceFor, canListen, listen, speak, stopSpeaking, voicesReady, type SpokenWith } from "./voice";
 import { CameraCapture, Dialog, Icon, Keypad, MicButton } from "./ui";
 import { AadhaarScan, FaceCapture, templateFromPhoto, type AadhaarResult } from "./Identity";
 import { QrScanner } from "@/shared/client/QrScanner";
@@ -42,7 +42,7 @@ type Pass = {
 type MemberDraft = { key: number; name: string; age: string; relation: (typeof RELATIONS)[number]; wheelchair: boolean; photo?: string; face?: string; faceState?: "working" | "ok" | "bad"; gender?: "M" | "F" | "T" };
 type Screen =
   | "setup" | "welcome" | "consent" | "identify" | "aadhaar" | "aadhaarPhone" | "phone" | "otp" | "family" | "slot" | "review" | "pass"
-  | "findHow" | "findPass" | "findFace"
+  | "findHow" | "findPass" | "findFace" | "allLangs"
   | "help" | "helpSent" | "lost" | "lostSent" | "findView" | "changeDone";
 type Flow = "register" | "find";
 
@@ -96,6 +96,23 @@ export default function KioskApp() {
   const [caseResult, setCaseResult] = useState<{ code?: string; queued?: boolean; name?: string } | null>(null);
   const [lost, setLost] = useState({ personName: "", age: "", description: "", lastSeen: "", reporterName: "", reporterPhone: "" });
   const [speaking, setSpeaking] = useState(false);
+  const [autoRead, setAutoRead] = useState(true);
+  const [voiceUsed, setVoiceUsed] = useState<SpokenWith | null>(null);
+  const [voicesLoaded, setVoicesLoaded] = useState(0);
+  const [hearing, setHearing] = useState(false);
+  const [heard, setHeard] = useState<string | null>(null);
+  const touched = useRef(false);
+  useEffect(() => {
+    void voicesReady().then((v) => setVoicesLoaded(v.length));
+    const mark = () => { touched.current = true; };
+    addEventListener("pointerdown", mark, { once: true });
+    return () => removeEventListener("pointerdown", mark);
+  }, []);
+  useEffect(() => {
+    const L = LANGUAGES.find((l) => l.code === lang)!;
+    document.documentElement.lang = lang;
+    document.documentElement.dir = L.rtl ? "rtl" : "ltr";
+  }, [lang]);
 
   // ---------- Device setup, heartbeat, config, offline outbox ----------
   useEffect(() => {
@@ -156,7 +173,7 @@ export default function KioskApp() {
     setMembers([]); setEditing(null); setHomeTown(""); setDay(""); setSlotData(null); setChosen(null);
     setPass(null); setQr(""); setHelpType(null); setHelpText(""); setCaseResult(null);
     setLost({ personName: "", age: "", description: "", lastSeen: "", reporterName: "", reporterPhone: "" });
-    setLangDialog(false);
+    setLangDialog(false); setHeard(null); setVoiceUsed(null);
   }, []);
 
   const lastActive = useRef(Date.now());
@@ -217,7 +234,9 @@ export default function KioskApp() {
     try { await fn(); } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
   };
   const langInfo = LANGUAGES.find((l) => l.code === lang)!;
-  const voiceAvailable = Boolean(config?.integrations.voice) || (typeof window !== "undefined" && Boolean(browserVoiceFor(lang)));
+  const serverVoice = Boolean(config?.integrations.voice);
+  const voiceAvailable = serverVoice || (voicesLoaded >= 0 && typeof window !== "undefined" && Boolean(browserVoiceFor(lang)));
+  const ghatName = (g: { name: string; nameHi: string }) => (lang === "en" ? g.name : g.nameHi || g.name);
 
   const toggleTheme = () => {
     const next = theme === "dark" ? "light" : "dark";
@@ -361,6 +380,7 @@ export default function KioskApp() {
       case "aadhaar": return { title: t("aadhaarTitle"), body: t("aadhaarBody") };
       case "aadhaarPhone": return { title: t("aadhaarPhoneTitle"), body: t("aadhaarPhoneBody") };
       case "findHow": return { title: t("findHowTitle"), body: t("findHowBody") };
+      case "allLangs": return { title: t("welcomeTitle"), body: t("allLanguagesBody") };
       case "findPass": return { title: t("findPassTitle"), body: t("findPassBody") };
       case "findFace": return { title: t("findFaceTitle"), body: t("findFaceBody") };
       case "phone": return { title: flow === "find" ? t("findTitle") : t("phoneTitle"), body: flow === "find" ? t("findBody") : t("phoneBody") };
@@ -373,17 +393,39 @@ export default function KioskApp() {
       case "helpSent": return { title: t("helpSent"), body: caseResult?.queued ? t("helpQueued") : t("helpSentBody", { code: caseResult?.code ?? "" }) };
       case "lost": return { title: t("lostTitle"), body: t("lostBody") };
       case "lostSent": return { title: t("lostSent", { name: caseResult?.name ?? "" }), body: caseResult?.queued ? t("helpQueued") : t("lostSentBody", { code: caseResult?.code ?? "" }) };
-      case "findView": return pass?.diversion && !pass.diversion.confirmed ? { title: t("divertedTitle"), body: t("divertedBody", { from: pass.diversion.fromGhat, to: lang === "hi" ? pass.ghat.nameHi : pass.ghat.name, time: `${pass.slot.start}–${pass.slot.end}` }) } : { title: t("yourRegistration"), body: pass && pass.slotChangesLeft > 0 ? t("changesLeft") : t("noChangesLeft") };
+      case "findView": return pass?.diversion && !pass.diversion.confirmed ? { title: t("divertedTitle"), body: t("divertedBody", { from: pass.diversion.fromGhat, to: ghatName(pass.ghat), time: `${pass.slot.start}–${pass.slot.end}` }) } : { title: t("yourRegistration"), body: pass && pass.slotChangesLeft > 0 ? t("changesLeft") : t("noChangesLeft") };
       default: return { title: "", body: "" };
     }
   })();
 
-  const readAloud = async () => {
-    if (speaking) { stopSpeaking(); setSpeaking(false); return; }
+  const readAloud = async (force = false) => {
+    if (speaking && !force) { stopSpeaking(); setSpeaking(false); return; }
     setSpeaking(true);
-    const how = await speak(`${guide.title}. ${guide.body}`, lang, Boolean(config?.integrations.voice));
-    if (how === "none") setError(t("voiceOff"));
-    setTimeout(() => setSpeaking(false), 8000);
+    const r = await speak(`${guide.title}. ${guide.body}`, lang, serverVoice, () => setSpeaking(false));
+    setVoiceUsed(r);
+    if (r.how === "none") setSpeaking(false);
+  };
+  // Read each screen aloud in the chosen language (after the first touch; browsers block sound before that).
+  const guideText = `${guide.title}|${guide.body}`;
+  useEffect(() => {
+    if (!autoRead || !touched.current || screen === "setup") return;
+    const id = setTimeout(() => void readAloud(true), 350);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guideText, lang, autoRead]);
+  const hearCommand = async () => {
+    if (hearing) return;
+    setError(null);
+    try {
+      setHearing(true); stopSpeaking(); setSpeaking(false);
+      const l = await listen(lang, serverVoice);
+      const said = (await l.result).trim();
+      const alts = said.toLowerCase().split(" | ");
+      setHeard(alts[0] || null);
+      const hit = LANGUAGES.find((L) => alts.some((a) => a.includes(L.native.toLowerCase()) || a.includes(L.english.toLowerCase())));
+      if (hit && (screen === "welcome" || screen === "allLangs")) setLang(hit.code);
+      else if (alts.some((a) => /help|madad|मदद|सहायता|সাহায্য|உதவி|సహాయం|ਮਦਦ|મદદ|ಸಹಾಯ|സഹായം|ମଦଦ|مدد/.test(a))) go("help");
+    } catch { setError(t("voiceOff")); } finally { setHearing(false); }
   };
 
   if (screen === "setup") return <Setup onDone={(c) => { saveCreds(c); setCreds(c); history.replaceState(null, "", withBase("/kiosk/")); reset(); }} current={creds} />;
@@ -408,15 +450,24 @@ export default function KioskApp() {
         <div className="k-spacer" />
         {inRegistration && step && <StepBar step={step} t={t} />}
         <div className="k-spacer" />
-        <button className="icon-btn" onClick={toggleTheme} aria-label={theme === "dark" ? t("themeLight") : t("themeDark")} title={theme === "dark" ? t("themeLight") : t("themeDark")}>
-          <Icon name={theme === "dark" ? "light_mode" : "dark_mode"} />
+        {canListen(serverVoice) && (
+          <button className={`k-listen${hearing ? " on" : ""}`} onClick={hearCommand} aria-pressed={hearing} title={heard ? t("heardYou", { text: heard }) : t("micOff")}>
+            <span className="dot" /><Icon name="mic" size="sm" />{(screen === "welcome" || screen === "allLangs" || hearing) && <span>{hearing ? t("listeningSay") : t("micOff")}</span>}
+          </button>
+        )}
+        <button className="k-round" onClick={() => { if (autoRead) { stopSpeaking(); setSpeaking(false); } setAutoRead((a) => !a); }} aria-pressed={autoRead} aria-label={autoRead ? t("mute") : t("unmute")} title={autoRead ? t("mute") : t("unmute")}>
+          <Icon name={autoRead ? "volume_up" : "volume_off"} />
         </button>
+        <div className="k-themeseg" role="radiogroup" aria-label={`${t("themeLight")} / ${t("themeDark")}`}>
+          <button role="radio" aria-checked={theme === "light"} aria-label={t("themeLight")} onClick={() => theme !== "light" && toggleTheme()}><Icon name="light_mode" size="sm" /></button>
+          <button role="radio" aria-checked={theme === "dark"} aria-label={t("themeDark")} onClick={() => theme !== "dark" && toggleTheme()}><Icon name="dark_mode" size="sm" /></button>
+        </div>
         <div className="k-seg" role="group" aria-label={t("chooseLanguage")}>
+          <button aria-pressed={lang === "en"} onClick={() => setLang("en")} lang="en">EN</button>
           <button aria-pressed={lang !== "en"} onClick={() => setLang(lang === "en" ? "hi" : lang)} lang={lang === "en" ? "hi" : lang}>
             {lang === "en" ? "हिं" : langInfo.short}
           </button>
-          <button aria-pressed={lang === "en"} onClick={() => setLang("en")} lang="en">EN</button>
-          <button onClick={() => setLangDialog(true)} aria-label={t("chooseLanguage")}><Icon name="translate" /></button>
+          <button onClick={() => (screen === "welcome" ? go("allLangs") : setLangDialog(true))} aria-label={t("chooseLanguage")}><Icon name="translate" /></button>
         </div>
         <button className="btn btn-filled small" onClick={() => go("help")} style={{ height: 48 }}>
           <Icon name="support_agent" /> {t("help")}
@@ -439,22 +490,56 @@ export default function KioskApp() {
       <main className="k-body">
         {/* ---------- Guide pane ---------- */}
         <section className="glass k-guide" aria-labelledby="guide-title">
-          {step && inRegistration && <div className="k-stepno">{t("stepOf", { n: step })}</div>}
-          <h1 id="guide-title">{guide.title}</h1>
-          <p>{guide.body}</p>
-          {screen === "welcome" && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              <span className="chip brand"><Icon name="record_voice_over" size="sm" /> {langInfo.native}</span>
-              <span className="chip"><Icon name="support_agent" size="sm" /> {t("noPhoneNeededForHelp")}</span>
+          {screen === "welcome" || screen === "allLangs" ? (
+            <>
+              <h1 id="guide-title" className="k-hello"><span>{t("greeting")}</span>{t("welcomeTitle")}</h1>
+              <p>{t("welcomeBody")}</p>
+              <div className="k-badges">
+                <span><Icon name="smartphone" size="sm" /> {t("badgeNoPhone")}</span>
+                <span><Icon name="record_voice_over" size="sm" /> {t("badgeLanguage")}</span>
+                <span><Icon name="currency_rupee" size="sm" /> {t("badgeFree")}</span>
+              </div>
+              <img className="k-art" src={`${BASE_PATH}/art/dwar.png`} alt="" />
+            </>
+          ) : (
+            <>
+              {(step && inRegistration) ? <div className="k-stepno">{screen === "pass" ? t("allDone") : t("stepOf", { n: step })}</div> : null}
+              <h1 id="guide-title">{guide.title}</h1>
+              <p>{guide.body}</p>
+            </>
+          )}
+          {screen === "aadhaar" && <div className="k-cardart" aria-hidden="true"><Icon name="badge" size="lg" /><Icon name="arrow_downward" /></div>}
+          {screen === "family" && (
+            <div className="k-infos">
+              <div><span className="ic"><Icon name="child_care" size="sm" /></span><span><b>{t("kidsTitle")}</b><small>{t("kidsBody")}</small></span></div>
+              <div><span className="ic"><Icon name="elderly" size="sm" /></span><span><b>{t("eldersTitle")}</b><small>{t("eldersBody")}</small></span></div>
+              <div><span className="ic"><Icon name="accessible" size="sm" /></span><span><b>{t("wheelTitle")}</b><small>{t("wheelBody")}</small></span></div>
             </div>
           )}
+          {screen === "slot" && config?.today && (
+            <div className="k-days" role="radiogroup" aria-label={t("day")}>
+              <small>{t("day")}</small>
+              {[0, 1, 2].map((i) => addDays(config.today, i)).map((d) => (
+                <button key={d} role="radio" aria-checked={d === day} onClick={() => void loadSlots(d)} disabled={busy}>
+                  <span>{dayLabel(d, config.today, t)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {(screen === "pass" || screen === "changeDone") && pass?.meetingPoint && (
+            <>
+              <div className="k-infos"><div><span className="ic"><Icon name="flag" size="sm" /></span><span><b>{t("separatedTitle")}</b><small>{t("meetingPoint", { place: pass.meetingPoint })}</small></span></div></div>
+              <img className="k-art sm" src={`${BASE_PATH}/art/dwar.png`} alt="" />
+            </>
+          )}
           {voiceAvailable ? (
-            <button className={`k-voice${speaking ? " speaking" : ""}`} onClick={readAloud} aria-pressed={speaking}>
-              <span className="orb"><Icon name={speaking ? "stop" : "volume_up"} /></span>
-              <span><b>{speaking ? t("stopReading") : t("readAloud")}</b><span className="t">{guide.title}</span></span>
+            <button className={`k-voice${speaking ? " speaking" : ""}`} onClick={() => void readAloud()} aria-pressed={speaking} aria-label={speaking ? t("stopReading") : t("readAloud")}>
+              <span className="orb"><Icon name={speaking ? "graphic_eq" : "volume_up"} /></span>
+              <span className="tx"><b>{speaking ? t("readingAloud") : t("tapToHear")}</b><span className="t">{guide.body}</span>{voiceUsed?.how === "browser" && !voiceUsed.exact && <small>{t("voiceVia", { name: voiceUsed.voiceName ?? "" })}</small>}</span>
+              <span className="wave" aria-hidden="true"><i /><i /><i /><i /><i /><i /></span>
             </button>
           ) : (
-            <div className="muted" style={{ marginTop: "auto", fontSize: 13, display: "flex", gap: 8, alignItems: "center" }}><Icon name="volume_off" size="sm" /> {t("voiceOff")}</div>
+            <div className="k-novoice"><Icon name="volume_off" size="sm" /> {t("voiceNone", { lang: langInfo.native })}</div>
           )}
         </section>
 
@@ -468,14 +553,33 @@ export default function KioskApp() {
                 <h2>{t("chooseLanguage")}</h2>
                 <p className="muted" style={{ margin: "-8px 0 0" }}>{t("chooseLanguageHint")}</p>
                 <div className="k-lang-grid">
+                  {[...LANGUAGES.slice(0, 7), LANGUAGES.slice(7).find((l) => l.code === lang) ?? LANGUAGES[7]].map((l) => (
+                    <button key={l.code} className="k-option" aria-pressed={lang === l.code} onClick={() => setLang(l.code)} lang={l.code} dir={l.rtl ? "rtl" : undefined}>
+                      <b>{l.native}</b>
+                      <small>{l.english}</small>
+                    </button>
+                  ))}
+                  <button className="k-option" onClick={() => go("allLangs")}>
+                    <b>{t("moreLanguages", { n: LANGUAGES.length - 8 })}</b>
+                    <small>{LANGUAGES.slice(8, 11).map((l) => l.english).join(", ")}…</small>
+                  </button>
+                </div>
+                <CrowdPanel config={config} t={t} ghatName={ghatName} />
+              </>
+            )}
+
+            {screen === "allLangs" && (
+              <>
+                <h2>{t("allLanguagesTitle", { n: LANGUAGES.length })}</h2>
+                <p className="muted" style={{ margin: "-8px 0 0" }}>{t("allLanguagesBody")}</p>
+                <div className="k-lang-grid">
                   {LANGUAGES.map((l) => (
-                    <button key={l.code} className="k-option" aria-pressed={lang === l.code} onClick={() => setLang(l.code)} lang={l.code}>
+                    <button key={l.code} className="k-option" aria-pressed={lang === l.code} onClick={() => setLang(l.code)} lang={l.code} dir={l.rtl ? "rtl" : undefined}>
                       <b>{l.native}</b>
                       <small>{l.english}</small>
                     </button>
                   ))}
                 </div>
-                <CrowdPanel config={config} t={t} lang={lang} />
               </>
             )}
 
@@ -512,8 +616,15 @@ export default function KioskApp() {
             )}
 
             {screen === "aadhaar" && (
-              <AadhaarScan t={t} testCards={Boolean(config?.integrations.aadhaarTestCards)} onError={(m) => setError(m === "offline" ? t("offline") : m)}
-                onVerified={(r) => { setAadhaar(r); setError(null); go("aadhaarPhone"); }} />
+              <>
+                <h2>{t("waitingForCard")}</h2>
+                <AadhaarScan t={t} testCards={Boolean(config?.integrations.aadhaarTestCards)} onError={(m) => setError(m === "offline" ? t("offline") : m)}
+                  onVerified={(r) => { setAadhaar(r); setError(null); go("aadhaarPhone"); }} />
+                <div className="k-alt">
+                  <button className="btn btn-outlined" onClick={() => go("phone")}><Icon name="dialpad" /> {t("noAadhaar")}</button>
+                  <button className="btn btn-text" onClick={() => go("help")}><Icon name="support_agent" /> {t("askVolunteer")}</button>
+                </div>
+              </>
             )}
 
             {screen === "aadhaarPhone" && aadhaar && (
@@ -606,8 +717,10 @@ export default function KioskApp() {
                         <b style={{ fontSize: 16 }}>{m.name || "—"}</b>
                         <div className="muted">{m.age} · {i === 0 ? t("you") : t(`rel_${m.relation}` as DictKey)}</div>
                       </div>
+                      {Number(m.age) >= 65 && <span className="chip warn"><span className="dot" /> {t("member_over65")}</span>}
+                      {Number(m.age) < 12 && m.age !== "" && <span className="chip good"><span className="dot" /> {t("member_child")}{m.photo ? ` · ${t("photoTaken")}` : ""}</span>}
+                      {m.wheelchair && <span className="chip warn"><span className="dot" /> {t("needsWheelchair")}</span>}
                       {faceConsent && m.face && <span className="chip good"><Icon name="face" size="sm" /> {t("faceSaved")}</span>}
-                      {m.wheelchair && <span className="chip warn"><Icon name="accessible" size="sm" /> {t("needsWheelchair")}</span>}
                       <span className={`chip ${needsBand(Number(m.age) || 0, i === 0) ? "good" : ""}`}><Icon name={needsBand(Number(m.age) || 0, i === 0) ? "watch" : "remove"} size="sm" /> {needsBand(Number(m.age) || 0, i === 0) ? t("bandYes") : t("bandNo")}</span>
                       <button className="icon-btn" onClick={() => setEditing(m)} aria-label={`${t("editMember")} ${m.name}`} disabled={Boolean(editing)}><Icon name="edit" /></button>
                     </div>
@@ -621,12 +734,12 @@ export default function KioskApp() {
             )}
 
             {screen === "slot" && (
-              <SlotPicker t={t} lang={lang} today={config?.today ?? ""} day={day} onDay={loadSlots} data={slotData} people={flow === "find" ? pass?.members.length ?? 1 : people} chosen={chosen} onChoose={setChosen} busy={busy} />
+              <SlotPicker t={t} lang={lang} today={config?.today ?? ""} day={day} data={slotData} people={flow === "find" ? pass?.members.length ?? 1 : people} chosen={chosen} onChoose={setChosen} busy={busy} ghatName={ghatName} wheelchairName={flow === "register" ? members.find((m) => m.wheelchair)?.name : pass?.members.find((m) => m.needs.includes("wheelchair"))?.name} />
             )}
 
             {screen === "review" && chosen && (
               <div style={{ display: "grid", gap: 12 }}>
-                <div className="k-row"><Icon name="location_on" /><div><b>{lang === "hi" ? chosen.ghat.nameHi : chosen.ghat.name}</b> · {chosen.ghat.gate}<div className="muted">{chosen.ghat.walkNote}</div></div></div>
+                <div className="k-row"><Icon name="location_on" /><div><b>{ghatName(chosen.ghat)}</b> · {chosen.ghat.gate}<div className="muted">{chosen.ghat.walkNote}</div></div></div>
                 <div className="k-row"><Icon name="schedule" /><div><b>{dayLabel(day, config?.today ?? "", t)}</b> · {chosen.slot.start}–{chosen.slot.end}</div></div>
                 <div className="k-row"><Icon name="groups" /><div><b>{t("peopleN", { n: people })}</b> · {members.map((m) => m.name).join(", ")}</div></div>
                 <div className="k-row"><Icon name="watch" /><div><b>{t("bandsN", { n: bands })}</b></div></div>
@@ -635,11 +748,11 @@ export default function KioskApp() {
 
             {screen === "findView" && pass?.diversion && (
               pass.diversion.confirmed ? (
-                <div className="banner good" role="status"><Icon name="check_circle" /> {divSeen ? t("divertedThanks") : `${t("divertedTitle")} · ${pass.diversion.fromGhat} → ${lang === "hi" ? pass.ghat.nameHi : pass.ghat.name}`}</div>
+                <div className="banner good" role="status"><Icon name="check_circle" /> {divSeen ? t("divertedThanks") : `${t("divertedTitle")} · ${pass.diversion.fromGhat} → ${ghatName(pass.ghat)}`}</div>
               ) : (
                 <div className="banner warn" role="alert" style={{ alignItems: "center" }}>
                   <Icon name="alt_route" />
-                  <span style={{ flex: 1 }}><b>{t("divertedTitle")}</b><br />{t("divertedBody", { from: pass.diversion.fromGhat, to: lang === "hi" ? pass.ghat.nameHi : pass.ghat.name, time: `${pass.slot.start}–${pass.slot.end}` })}</span>
+                  <span style={{ flex: 1 }}><b>{t("divertedTitle")}</b><br />{t("divertedBody", { from: pass.diversion.fromGhat, to: ghatName(pass.ghat), time: `${pass.slot.start}–${pass.slot.end}` })}</span>
                   <button className="btn btn-filled" disabled={busy} onClick={confirmDiversion}><Icon name="done_all" /> {t("divertedSeen")}</button>
                 </div>
               )
@@ -703,12 +816,12 @@ export default function KioskApp() {
             {screen === "consent" && (
               <>
                 <button className="btn btn-tonal" onClick={() => go("welcome")}><Icon name="arrow_back" /> {t("back")}</button>
-                <button className="btn btn-filled" onClick={() => go("identify")}><Icon name="check" /> {t("consentAgree")}</button>
+                <button className="btn btn-filled" onClick={() => go(config?.integrations.aadhaar === false ? "phone" : "aadhaar")}><Icon name="check" /> {t("consentAgree")}</button>
               </>
             )}
             {screen === "phone" && (
               <>
-                <button className="btn btn-tonal" onClick={() => go(flow === "find" ? "findHow" : "identify")}><Icon name="arrow_back" /> {t("back")}</button>
+                <button className="btn btn-tonal" onClick={() => go(flow === "find" ? "findHow" : config?.integrations.aadhaar === false ? "consent" : "aadhaar")}><Icon name="arrow_back" /> {t("back")}</button>
                 <button className="btn btn-filled" onClick={sendOtp} disabled={phone.length !== 10 || busy}><Icon name="sms" /> {t("sendCode")}</button>
               </>
             )}
@@ -720,8 +833,8 @@ export default function KioskApp() {
             )}
             {screen === "aadhaar" && (
               <>
-                <button className="btn btn-tonal" onClick={() => go("identify")}><Icon name="arrow_back" /> {t("back")}</button>
-                <button className="btn btn-text" onClick={() => go("phone")}><Icon name="smartphone" /> {t("idPhone")}</button>
+                <button className="btn btn-tonal" onClick={() => go("consent")}><Icon name="arrow_back" /> {t("back")}</button>
+                <span />
               </>
             )}
             {screen === "aadhaarPhone" && (
@@ -734,6 +847,12 @@ export default function KioskApp() {
               <>
                 <button className="btn btn-tonal" onClick={() => go("welcome")}><Icon name="arrow_back" /> {t("back")}</button>
                 <span />
+              </>
+            )}
+            {screen === "allLangs" && (
+              <>
+                <button className="btn btn-tonal" onClick={() => go("welcome")}><Icon name="arrow_back" /> {t("back")}</button>
+                <button className="btn btn-filled" onClick={() => { setFlow("register"); go("consent"); }} lang={lang}><Icon name="arrow_forward" /> {t("continueIn", { lang: langInfo.native })}</button>
               </>
             )}
             {screen === "findPass" && (
@@ -757,21 +876,21 @@ export default function KioskApp() {
             {screen === "family" && (
               <>
                 <button className="btn btn-tonal" onClick={() => go("welcome")}><Icon name="close" /> {t("startOver")}</button>
-                <button className="btn btn-filled" disabled={!membersValid || Boolean(editing)} onClick={() => { go("slot"); void loadSlots(config?.today ?? day); }}><Icon name="arrow_forward" /> {t("next")}</button>
+                <button className="btn btn-filled" disabled={!membersValid || Boolean(editing)} onClick={() => { go("slot"); void loadSlots(config?.today ?? day); }}><Icon name="arrow_forward" /> {t("chooseSlot")}</button>
               </>
             )}
             {screen === "slot" && (
               <>
                 <button className="btn btn-tonal" onClick={() => go(flow === "find" ? "findView" : "family")}><Icon name="arrow_back" /> {t("back")}</button>
                 <button className="btn btn-filled" disabled={!chosen || busy} onClick={() => (flow === "find" ? changeSlotConfirm() : go("review"))}>
-                  <Icon name="arrow_forward" /> {flow === "find" && chosen ? t("confirmBook", { time: chosen.slot.start, ghat: lang === "hi" ? chosen.ghat.nameHi : chosen.ghat.name }) : t("next")}
+                  <Icon name="event" /> {chosen ? (flow === "find" ? t("confirmBook", { time: chosen.slot.start, ghat: ghatName(chosen.ghat) }) : t("bookAt", { time: chosen.slot.start, ghat: ghatName(chosen.ghat) })) : t("next")}
                 </button>
               </>
             )}
             {screen === "review" && chosen && (
               <>
                 <button className="btn btn-tonal" onClick={() => go("slot")}><Icon name="arrow_back" /> {t("back")}</button>
-                <button className="btn btn-filled" disabled={busy} onClick={book}><Icon name="event_available" /> {t("confirmBook", { time: chosen.slot.start, ghat: lang === "hi" ? chosen.ghat.nameHi : chosen.ghat.name })}</button>
+                <button className="btn btn-filled" disabled={busy} onClick={book}><Icon name="event_available" /> {t("confirmBook", { time: chosen.slot.start, ghat: ghatName(chosen.ghat) })}</button>
               </>
             )}
             {(screen === "pass" || screen === "changeDone") && (
@@ -853,30 +972,28 @@ function levelKey(l: Level): DictKey {
   return l;
 }
 
-function CrowdPanel({ config, t, lang }: { config: Config | null; t: (k: DictKey, v?: Record<string, string | number>) => string; lang: LangCode }) {
+function CrowdPanel({ config, t, ghatName }: { config: Config | null; t: (k: DictKey, v?: Record<string, string | number>) => string; ghatName: (g: { name: string; nameHi: string }) => string }) {
   if (!config) return null;
   return (
-    <div className="card" style={{ background: "var(--surface-low)" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <b style={{ flex: 1 }}>{t("liveCrowd")}</b>
-      </div>
+    <div className="k-live">
+      <div className="k-live-head"><span className="dot" /><b>{t("liveAtMela")}</b></div>
       <div className="k-crowd">
         {config.ghats.map((g) => (
           <div className="tile" key={g.id}>
-            <div style={{ fontSize: 13 }}>{lang === "hi" ? g.nameHi : g.name}</div>
+            <div style={{ fontSize: 13 }}>{ghatName(g)}</div>
             {g.updatedMinutesAgo === null ? (
               <div className="muted" style={{ fontSize: 13, marginTop: 8 }}>{t("noCrowdData")}</div>
             ) : (
               <>
                 <div className={`pct level-${g.level}`}>{g.percent}%</div>
                 <div className="bar"><i className={`level-${g.level}-bg`} style={{ width: `${Math.min(100, g.percent)}%` }} /></div>
-                <div style={{ fontSize: 12, marginTop: 6 }}><b className={`level-${g.level}`}>{t(levelKey(g.level))}</b></div>
-                <div className="muted" style={{ fontSize: 11 }}>{t("updatedByStaff", { m: g.updatedMinutesAgo })}</div>
+                <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>{t(levelKey(g.level))} · {t("updatedByStaff", { m: g.updatedMinutesAgo })}</div>
               </>
             )}
           </div>
         ))}
       </div>
+      <small className="muted">{t("calmestSuggest")}</small>
     </div>
   );
 }
@@ -887,83 +1004,108 @@ function dayLabel(day: string, today: string, t: (k: DictKey) => string) {
   return new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
 }
 
-function SlotPicker({ t, lang, today, day, onDay, data, people, chosen, onChoose, busy }: {
-  t: (k: DictKey, v?: Record<string, string | number>) => string; lang: LangCode; today: string; day: string; onDay: (d: string) => void;
+function SlotPicker({ t, lang, today, day, data, people, chosen, onChoose, busy, ghatName, wheelchairName }: {
+  t: (k: DictKey, v?: Record<string, string | number>) => string; lang: LangCode; today: string; day: string;
   data: SlotGhat[] | null; people: number; chosen: { ghat: SlotGhat; slot: SlotGhat["slots"][number] } | null;
-  onChoose: (c: { ghat: SlotGhat; slot: SlotGhat["slots"][number] }) => void; busy: boolean;
+  onChoose: (c: { ghat: SlotGhat; slot: SlotGhat["slots"][number] }) => void; busy: boolean; ghatName: (g: { name: string; nameHi: string }) => string; wheelchairName?: string;
 }) {
-  const days = today ? [0, 1, 2, 3].map((i) => addDays(today, i)) : [];
   const now = istNowHHMM();
+  const steps = (g: SlotGhat) => /steps/i.test(g.walkNote) && !/no steps/i.test(g.walkNote);
+  const ghats = (data ?? []).map((g) => ({ g, slots: g.slots.filter((s) => !(day === today && s.start <= now)) }))
+    .sort((a, b) => (wheelchairName ? Number(steps(a.g)) - Number(steps(b.g)) : 0) || a.g.crowd.percent - b.g.crowd.percent);
+  const sel = chosen ? ghats.find((x) => x.g.id === chosen.ghat.id) : null;
+  const dayText = today ? (lang === "en" ? dayLabel(day, today, t).toLowerCase() : dayLabel(day, today, t)) : "";
   return (
     <>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }} role="radiogroup" aria-label={t("slotTitle")}>
-        {days.map((d) => (
-          <button key={d} className="k-option" style={{ minHeight: 56, minWidth: 140 }} role="radio" aria-checked={d === day} onClick={() => onDay(d)}>
-            <b style={{ fontSize: 17 }}>{dayLabel(d, today, t)}</b>
-          </button>
-        ))}
-      </div>
+      <h2>{t("ghatsOn", { day: dayText })}</h2>
       {busy && !data && <p className="muted">…</p>}
-      {data?.map((g) => {
-        const slots = g.slots.filter((s) => !(day === today && s.start <= now));
-        return (
-          <div className="k-slot-ghat" key={g.id}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <b style={{ fontSize: 18, flex: 1 }}>{lang === "hi" ? g.nameHi : g.name} <span className="muted" style={{ fontWeight: 400, fontSize: 14 }}>· {g.gate} · {g.walkNote}</span></b>
-              {g.crowd.updatedMinutesAgo !== null && (
-                <span className={`chip ${g.crowd.level === "calm" ? "good" : g.crowd.level === "moderate" ? "warn" : "bad"}`}><span className="dot" /> {t(levelKey(g.crowd.level))} · {g.crowd.percent}%</span>
+      <div className="k-ghats" role="radiogroup" aria-label={t("slotTitle")}>
+        {ghats.map(({ g, slots }) => {
+          const first = slots.find((s) => s.left >= people);
+          const on = chosen?.ghat.id === g.id;
+          const level = g.crowd.level === "calm" ? "good" : g.crowd.level === "moderate" ? "warn" : "bad";
+          return (
+            <div key={g.id} className={`k-ghat${on ? " on" : ""}`}>
+              <button role="radio" aria-checked={on} disabled={!first} onClick={() => first && onChoose({ ghat: g, slot: on && chosen ? chosen.slot : first })}>
+                <span className="radio" aria-hidden="true" />
+                <span className="t">
+                  <b>{ghatName(g)}</b>
+                  <small>{first ? `${first.start}–${first.end}` : t("noSlots")} · {g.gate} · {g.walkNote}</small>
+                  {g.crowd.updatedMinutesAgo !== null && <span className="bar"><i className={`level-${g.crowd.level}-bg`} style={{ width: `${Math.min(100, g.crowd.percent)}%` }} /></span>}
+                </span>
+                {g.crowd.updatedMinutesAgo !== null && <span className={`chip ${level}`}><span className="dot" /> {t(levelKey(g.crowd.level))}</span>}
+                {g.crowd.updatedMinutesAgo !== null && <span className={`pct level-${g.crowd.level}`}>{g.crowd.percent}%</span>}
+              </button>
+              {on && slots.length > 1 && (
+                <div className="k-slot-times" role="radiogroup" aria-label={t("otherTimes")}>
+                  {slots.slice(0, 10).map((s) => {
+                    const ok = s.left >= people;
+                    return (
+                      <button key={s.id} className="k-time" role="radio" aria-checked={chosen?.slot.id === s.id} disabled={!ok} onClick={() => onChoose({ ghat: g, slot: s })}>
+                        <b>{s.start}</b>
+                        <small>{ok ? t("placesLeft", { n: s.left }) : t("full")}</small>
+                      </button>
+                    );
+                  })}
+                </div>
               )}
             </div>
-            <div className="k-slot-times" role="radiogroup" aria-label={g.name}>
-              {slots.length === 0 && <span className="muted">{t("noSlots")}</span>}
-              {slots.slice(0, 12).map((s) => {
-                const ok = s.left >= people;
-                return (
-                  <button key={s.id} className="k-time" role="radio" aria-checked={chosen?.slot.id === s.id} disabled={!ok} onClick={() => onChoose({ ghat: g, slot: s })}>
-                    <b>{s.start}</b>
-                    <small>{ok ? t("placesLeft", { n: s.left }) : t("full")}</small>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
+      {wheelchairName && <p className="muted k-note"><Icon name="accessible" size="sm" /> {t("wheelchairFirst", { name: wheelchairName })}</p>}
+      {sel && sel.g.crowd.updatedMinutesAgo !== null && (
+        <div className="k-liveview">
+          <div className="pic" style={{ backgroundImage: `url(${BASE_PATH}/art/aerial-light.jpg)` }}><span className="you">{ghatName(sel.g)}</span></div>
+          <div><div className="k-live-head"><span className="dot" /><b>{t("liveView", { ghat: ghatName(sel.g) })}</b></div><div className={`big level-${sel.g.crowd.level}`}>{sel.g.crowd.percent}%</div><small className="muted">{t("fullNow")} · {sel.g.walkNote} · {sel.g.gate}</small></div>
+        </div>
+      )}
     </>
   );
 }
 
 function PassView({ pass, qr, t, lang, today }: { pass: Pass; qr: string; t: (k: DictKey, v?: Record<string, string | number>) => string; lang: LangCode; today: string }) {
+  const ghat = lang === "en" ? pass.ghat.name : pass.ghat.nameHi || pass.ghat.name;
+  const gateNo = pass.ghat.gate.replace(/\D/g, "") || pass.ghat.gate;
+  const bands = pass.members.filter((m) => m.hasBand);
+  // Slot start in IST → minutes from now.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const iv = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(iv); }, []);
+  const startMs = Date.parse(`${pass.slot.day}T${pass.slot.start}:00+05:30`);
+  const mins = Math.max(0, Math.round((startMs - now) / 60_000));
+  const leave = new Date(startMs - 30 * 60_000).toLocaleTimeString(lang === "en" ? "en-IN" : `${lang}-IN`, { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
   return (
-    <div className="printable" style={{ display: "grid", gap: 12 }}>
+    <div className="printable k-passwrap">
       <div className="k-pass">
-        <div style={{ display: "grid", gap: 6 }}>
-          <span className="muted mono" style={{ fontSize: 13 }}>{pass.replaces ? t("newPass", { code: pass.passCode }) : `Pass · ${pass.passCode}`}</span>
+        <div style={{ display: "grid", gap: 6, alignContent: "start" }}>
+          <span className="muted mono" style={{ fontSize: 13 }}>{pass.replaces ? t("newPass", { code: pass.passCode }) : t("passLabel", { code: pass.passCode })}</span>
           {pass.replaces && <span className="chip warn" style={{ width: "fit-content" }}>{t("replaces", { code: pass.replaces })}</span>}
-          <b style={{ fontSize: 26, fontWeight: 400 }}>{lang === "hi" ? pass.ghat.nameHi : pass.ghat.name} · {t("gate")} {pass.ghat.gate.replace(/\D/g, "")}</b>
+          <b style={{ fontSize: 26, fontWeight: 400 }}>{ghat} · {t("gate")} {gateNo}</b>
           <span style={{ fontSize: 17 }}>{dayLabel(pass.slot.day, today, t)} · {pass.slot.start}–{pass.slot.end}</span>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
-            <span className="chip"><Icon name="groups" size="sm" /> {t("peopleN", { n: pass.members.length })}</span>
-            <span className="chip good"><Icon name="watch" size="sm" /> {t("bandsN", { n: pass.members.filter((m) => m.hasBand).length })}</span>
-            {pass.members.some((m) => m.needs.includes("wheelchair")) && <span className="chip warn"><Icon name="accessible" size="sm" /> {t("needsWheelchair")}</span>}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+            <span className="chip good"><span className="dot" /> {t("peopleN", { n: pass.members.length })}</span>
+            {pass.members.some((m) => m.needs.includes("wheelchair")) && <span className="chip warn"><span className="dot" /> {t("needsWheelchair")}</span>}
+            {pass.meetingPoint && <span className="chip"><span className="dot" /> {pass.meetingPoint}</span>}
           </div>
         </div>
+        <div className="k-gate"><small>{t("gate")}</small><b>{gateNo}</b></div>
         <div style={{ display: "grid", justifyItems: "center", gap: 6 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           {qr && <img className="qr" src={qr} alt={`QR ${pass.passCode}`} />}
           <span className="mono" style={{ fontSize: 13 }}>{pass.passCode}</span>
         </div>
       </div>
-      {pass.meetingPoint && <div className="banner info"><Icon name="location_on" /> {t("meetingPoint", { place: pass.meetingPoint })}</div>}
-      <div style={{ display: "grid", gap: 8 }}>
-        {pass.members.map((m, i) => (
-          <div className="k-row" key={i} style={{ padding: "8px 12px" }}>
-            <div className="k-avatar" style={{ width: 32, height: 32, fontSize: 13 }}>{m.name[0]?.toUpperCase()}</div>
-            <span style={{ flex: 1 }}>{m.name} · {m.age}</span>
-            {m.hasBand ? <span className="chip good"><Icon name="watch" size="sm" /> {t("bandYes")}</span> : <span className="chip">{t("bandNo")}</span>}
+      <div className="k-row k-bands"><span className="ic"><Icon name="watch" /></span><div><b>{t("bandsN", { n: bands.length })}</b>{bands.length > 0 && <> · {bands.map((m) => m.name.split(" ")[0]).join(", ")}</>}<div className="muted">{t("bandsBody")}</div></div></div>
+      {startMs > now && (
+        <div className="k-liveview">
+          <div className="pic" style={{ backgroundImage: `url(${BASE_PATH}/art/aerial-light.jpg)` }}><span className="you">{ghat} · {t("gate")} {gateNo}</span></div>
+          <div>
+            <small className="muted">{t("slotStartsIn")}</small>
+            <div className="big" style={{ color: "var(--primary)" }}>{mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`}</div>
+            <small className="muted">{t("leaveBy", { time: leave })}</small>
           </div>
-        ))}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

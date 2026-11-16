@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { startListening } from "./voice";
+import { listen } from "./voice";
 import type { LangCode } from "@/shared/languages";
 import type { T } from "@/i18n";
 
@@ -40,15 +40,15 @@ export function Keypad({ value, onChange, max, onDone, t }: { value: string; onC
 }
 
 /** Speech-to-text button for a text field. Only rendered when voice is configured on the server. */
-export function MicButton({ lang, onText, t, onError }: { lang: LangCode; onText: (s: string) => void; t: T; onError: (msg: string) => void }) {
-  const [rec, setRec] = useState<null | { stop: () => Promise<string> }>(null);
+export function MicButton({ lang, onText, t, onError, voice = false }: { lang: LangCode; onText: (s: string) => void; t: T; onError: (msg: string) => void; voice?: boolean }) {
+  const [rec, setRec] = useState<null | { stop: () => Promise<string>; result?: Promise<string> }>(null);
   const [busy, setBusy] = useState(false);
   const toggle = async () => {
     if (rec) {
       setBusy(true);
       try {
         const text = await rec.stop();
-        if (text) onText(text);
+        if (text) onText(text.split(" | ")[0]);
       } catch {
         onError(t("errGeneric"));
       } finally {
@@ -58,7 +58,9 @@ export function MicButton({ lang, onText, t, onError }: { lang: LangCode; onText
       return;
     }
     try {
-      setRec(await startListening(lang));
+      const l = await listen(lang, voice);
+      setRec(l);
+      void l.result.then((txt) => { if (txt) onText(txt.split(" | ")[0]); setRec(null); }).catch(() => { onError(t("voiceOff")); setRec(null); });
     } catch {
       onError(t("voiceOff"));
     }
