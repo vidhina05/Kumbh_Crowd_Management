@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { listen } from "./voice";
+import { listen, voiceErrorKey } from "./voice";
 import type { LangCode } from "@/shared/languages";
 import type { T } from "@/i18n";
 
@@ -60,9 +60,9 @@ export function MicButton({ lang, onText, t, onError, voice = false }: { lang: L
     try {
       const l = await listen(lang, voice);
       setRec(l);
-      void l.result.then((txt) => { if (txt) onText(txt.split(" | ")[0]); setRec(null); }).catch(() => { onError(t("voiceOff")); setRec(null); });
-    } catch {
-      onError(t("voiceOff"));
+      void l.result.then((txt) => { if (txt) onText(txt.split(" | ")[0]); setRec(null); }).catch((e) => { onError(t(voiceErrorKey(e))); setRec(null); });
+    } catch (e) {
+      onError(t(voiceErrorKey(e)));
     }
   };
   return (

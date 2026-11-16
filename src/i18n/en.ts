@@ -252,6 +252,10 @@ export const en = {
   mute: "Turn voice off",
   unmute: "Turn voice on",
   aadhaarUnchecked: "Real card · UIDAI signature not checked in this demo",
+  voiceNoMatch: "We heard “{text}” but it isn't a choice on this screen. Say a button's words, or tap it.",
+  micBlocked: "Allow the microphone for this kiosk to answer by voice.",
+  voiceNeedsNet: "Voice answers need an internet connection on this device.",
+  voiceNoLang: "This browser can't hear this language yet. Tap the buttons instead.",
 };
 
 export type Dict = typeof en;

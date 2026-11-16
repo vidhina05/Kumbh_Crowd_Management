@@ -162,3 +162,12 @@ async function toWav16k(blob: Blob): Promise<string> {
   for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode(...u8.subarray(i, i + 0x8000));
   return btoa(bin);
 }
+
+/** Which message to show for a recognition failure. */
+export function voiceErrorKey(e: unknown): "micBlocked" | "voiceNeedsNet" | "voiceNoLang" | "voiceOff" {
+  const code = e instanceof Error ? e.message : "";
+  if (code === "not-allowed" || code === "service-not-allowed" || code === "audio-capture" || (e instanceof DOMException && e.name === "NotAllowedError")) return "micBlocked";
+  if (code === "network") return "voiceNeedsNet";
+  if (code === "language-not-supported") return "voiceNoLang";
+  return "voiceOff";
+}

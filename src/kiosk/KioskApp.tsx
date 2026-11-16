@@ -4,8 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
 import "./kiosk.css";
 import { ApiError, clearCreds, flushOutbox, kioskFetch, loadCreds, queue, saveCreds, type KioskCreds } from "./api";
-import { browserVoiceFor, canListen, listen, speak, stopSpeaking, voicesReady, type SpokenWith } from "./voice";
+import { browserVoiceFor, canListen, listen, speak, voiceErrorKey, stopSpeaking, voicesReady, type SpokenWith } from "./voice";
 import { CameraCapture, Dialog, Icon, Keypad, MicButton } from "./ui";
+import { answerByVoice } from "./voiceAnswer";
 import { AadhaarScan, FaceCapture, templateFromPhoto, type AadhaarResult } from "./Identity";
 import { QrScanner } from "@/shared/client/QrScanner";
 import { translator, type DictKey } from "@/i18n";
@@ -101,6 +102,10 @@ export default function KioskApp() {
   const [voicesLoaded, setVoicesLoaded] = useState(-1); // -1 until mounted, so server and first client render match
   const [hearing, setHearing] = useState(false);
   const [heard, setHeard] = useState<string | null>(null);
+  const hearingRef = useRef(false);
+  const talkBack = useRef(false);
+  const silent = useRef(0);
+  const hearRef = useRef<((auto?: boolean) => Promise<void>) | null>(null);
   const touched = useRef(false);
   useEffect(() => {
     void voicesReady().then((v) => setVoicesLoaded(v.length));
@@ -235,6 +240,8 @@ export default function KioskApp() {
   };
   const langInfo = LANGUAGES.find((l) => l.code === lang)!;
   const serverVoice = Boolean(config?.integrations.voice);
+  const [canHear, setCanHear] = useState(false);
+  useEffect(() => setCanHear(canListen(serverVoice)), [serverVoice]);
   const voiceAvailable = serverVoice || (voicesLoaded >= 0 && typeof window !== "undefined" && Boolean(browserVoiceFor(lang)));
   // Ghat names exist in English and Hindi; Devanagari-script languages get the Hindi name, everyone else the English one.
   const ghatName = (g: { name: string; nameHi: string }) => (langInfo.script === "Deva" ? g.nameHi || g.name : g.name);
@@ -402,7 +409,10 @@ export default function KioskApp() {
   const readAloud = async (force = false) => {
     if (speaking && !force) { stopSpeaking(); setSpeaking(false); return; }
     setSpeaking(true);
-    const r = await speak(`${guide.title}. ${guide.body}`, lang, serverVoice, () => setSpeaking(false));
+    const r = await speak(`${guide.title}. ${guide.body}`, lang, serverVoice, () => {
+      setSpeaking(false);
+      if (talkBack.current) setTimeout(() => void hearRef.current?.(true), 300);
+    });
     setVoiceUsed(r);
     if (r.how === "none") setSpeaking(false);
   };
@@ -414,20 +424,37 @@ export default function KioskApp() {
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [guideText, lang, autoRead]);
-  const hearCommand = async () => {
-    if (hearing) return;
+  const hearCommand = async (auto = false) => {
+    if (hearingRef.current) return;
+    hearingRef.current = true;
     setError(null);
+    if (!auto) talkBack.current = true; // after one tap, the kiosk listens for an answer each time it finishes speaking
     try {
       setHearing(true); stopSpeaking(); setSpeaking(false);
       const l = await listen(lang, serverVoice);
       const said = (await l.result).trim();
-      const alts = said.toLowerCase().split(" | ");
+      const alts = said.toLowerCase().split(" | ").map((a) => a.trim()).filter(Boolean);
       setHeard(alts[0] || null);
+      if (!alts.length) {
+        silent.current += 1;
+        if (silent.current >= 2) talkBack.current = false; // nobody answering: stop opening the mic
+        return;
+      }
+      silent.current = 0;
       const hit = LANGUAGES.find((L) => alts.some((a) => a.includes(L.native.toLowerCase()) || a.includes(L.english.toLowerCase())));
-      if (hit && (screen === "welcome" || screen === "allLangs")) setLang(hit.code);
-      else if (alts.some((a) => /help|madad|मदद|सहायता|সাহায্য|உதவி|సహాయం|ਮਦਦ|મદદ|ಸಹಾಯ|സഹായം|ମଦଦ|مدد/.test(a))) go("help");
-    } catch { setError(t("voiceOff")); } finally { setHearing(false); }
+      if (hit && (screen === "welcome" || screen === "allLangs")) { setLang(hit.code); return; }
+      const root = document.querySelector<HTMLElement>(".k-body");
+      const r = root ? await answerByVoice(root, alts) : { kind: "none" as const };
+      if (r.kind === "none") {
+        if (alts.some((a) => /help|madad|मदद|सहायता|সাহায্য|உதவி|సహాయం|ਮਦਦ|મદદ|ಸಹಾಯ|സഹായം|ମଦଦ|مدد/.test(a))) go("help");
+        else setError(t("voiceNoMatch", { text: alts[0] }));
+      }
+    } catch (e) {
+      talkBack.current = false;
+      setError(t(voiceErrorKey(e)));
+    } finally { hearingRef.current = false; setHearing(false); }
   };
+  hearRef.current = hearCommand;
 
   if (screen === "setup") return <Setup onDone={(c) => { saveCreds(c); setCreds(c); history.replaceState(null, "", withBase("/kiosk/")); reset(); }} current={creds} />;
 
@@ -452,7 +479,7 @@ export default function KioskApp() {
         {inRegistration && step && <StepBar step={step} t={t} />}
         <div className="k-spacer" />
         {voicesLoaded >= 0 && canListen(serverVoice) && (
-          <button className={`k-listen${hearing ? " on" : ""}`} onClick={hearCommand} aria-pressed={hearing} title={heard ? t("heardYou", { text: heard }) : t("micOff")}>
+          <button className={`k-listen${hearing ? " on" : ""}`} onClick={() => void hearCommand()} aria-pressed={hearing} title={heard ? t("heardYou", { text: heard }) : t("micOff")}>
             <span className="dot" /><Icon name="mic" size="sm" />{(screen === "welcome" || screen === "allLangs" || hearing) && <span>{hearing ? t("listeningSay") : t("micOff")}</span>}
           </button>
         )}
@@ -547,6 +574,8 @@ export default function KioskApp() {
         {/* ---------- Action pane ---------- */}
         <section className="glass k-action" aria-live="polite">
           <div className="k-scroll">
+            {hearing && <div className="banner" role="status"><Icon name="mic" /> {t("listeningSay")}</div>}
+            {!hearing && heard && !error && <div className="banner good" role="status"><Icon name="hearing" /> {t("heardYou", { text: heard })}</div>}
             {error && <div className="banner bad" role="alert"><Icon name="error" /> {error}</div>}
 
             {screen === "welcome" && (
@@ -706,7 +735,7 @@ export default function KioskApp() {
                 </div>
                 {members.map((m, i) =>
                   editing?.key === m.key ? (
-                    <MemberForm key={m.key} m={editing} leader={i === 0} t={t} lang={lang} voice={Boolean(config?.integrations.voice)} photoAllowed={photoConsent} faceAllowed={faceConsent}
+                    <MemberForm key={m.key} m={editing} leader={i === 0} t={t} lang={lang} voice={canHear} serverVoice={serverVoice} photoAllowed={photoConsent} faceAllowed={faceConsent}
                       onChange={setEditing}
                       onSave={(next) => { setMembers((ms) => ms.map((x) => (x.key === next.key ? next : x))); setEditing(null); }}
                       onRemove={i === 0 ? undefined : () => { setMembers((ms) => ms.filter((x) => x.key !== m.key)); setEditing(null); }}
@@ -776,7 +805,7 @@ export default function KioskApp() {
                   <div className="field">
                     <label htmlFor="help-text">{t("helpDetails")}</label>
                     <textarea id="help-text" className="input" maxLength={500} value={helpText} onChange={(e) => setHelpText(e.target.value)} />
-                    {config?.integrations.voice && <div><MicButton lang={lang} t={t} onText={(s) => setHelpText((v) => (v ? `${v} ${s}` : s))} onError={setError} /></div>}
+                    {canHear && <div><MicButton lang={lang} t={t} voice={serverVoice} onText={(s) => setHelpText((v) => (v ? `${v} ${s}` : s))} onError={setError} /></div>}
                   </div>
                 )}
               </>
@@ -789,7 +818,7 @@ export default function KioskApp() {
                     <label htmlFor={`lost-${f}`}>{t(label)}</label>
                     <input id={`lost-${f}`} className="input" inputMode={mode} value={lost[f]} maxLength={f === "description" ? 500 : 120}
                       onChange={(e) => setLost((s) => ({ ...s, [f]: mode === "numeric" ? e.target.value.replace(/\D/g, "").slice(0, f === "age" ? 3 : 10) : e.target.value }))} />
-                    {config?.integrations.voice && mode === "text" && <div><MicButton lang={lang} t={t} onText={(s) => setLost((v) => ({ ...v, [f]: s }))} onError={setError} /></div>}
+                    {canHear && mode === "text" && <div><MicButton lang={lang} t={t} voice={serverVoice} onText={(s) => setLost((v) => ({ ...v, [f]: s }))} onError={setError} /></div>}
                   </div>
                 ))}
               </div>
@@ -1112,8 +1141,8 @@ function PassView({ pass, qr, t, lang, today }: { pass: Pass; qr: string; t: (k:
   );
 }
 
-function MemberForm({ m, leader, t, lang, voice, photoAllowed, faceAllowed, onChange, onSave, onRemove, onError }: {
-  m: MemberDraft; leader: boolean; t: (k: DictKey, v?: Record<string, string | number>) => string; lang: LangCode; voice: boolean; photoAllowed: boolean; faceAllowed: boolean;
+function MemberForm({ m, leader, t, lang, voice, serverVoice, photoAllowed, faceAllowed, onChange, onSave, onRemove, onError }: {
+  m: MemberDraft; leader: boolean; t: (k: DictKey, v?: Record<string, string | number>) => string; lang: LangCode; voice: boolean; serverVoice: boolean; photoAllowed: boolean; faceAllowed: boolean;
   onChange: (m: MemberDraft) => void; onSave: (m: MemberDraft) => void; onRemove?: () => void; onError: (s: string) => void;
 }) {
   const [touched, setTouched] = useState(false);
@@ -1129,7 +1158,7 @@ function MemberForm({ m, leader, t, lang, voice, photoAllowed, faceAllowed, onCh
           <label htmlFor={`n-${m.key}`}>{t("name")}</label>
           <input id={`n-${m.key}`} className="input" value={m.name} maxLength={80} aria-invalid={touched && !nameOk} onChange={(e) => onChange({ ...m, name: e.target.value })} autoFocus />
           {touched && !nameOk && <span className="err">{t("required")}</span>}
-          {voice && <div><MicButton lang={lang} t={t} onText={(s) => onChange({ ...m, name: s })} onError={onError} /></div>}
+          {voice && <div><MicButton lang={lang} t={t} voice={serverVoice} onText={(s) => onChange({ ...m, name: s })} onError={onError} /></div>}
         </div>
         <div className="field">
           <label htmlFor={`a-${m.key}`}>{t("age")}</label>
