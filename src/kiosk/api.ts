@@ -35,7 +35,7 @@ export function clearCreds() {
   localStorage.removeItem(CREDS_KEY);
 }
 
-export async function kioskFetch<T>(path: string, opts: { method?: string; body?: unknown; pilgrimToken?: string | null; creds?: KioskCreds | null; timeoutMs?: number } = {}): Promise<T> {
+export async function kioskFetch<T>(path: string, opts: { method?: string; body?: unknown; pilgrimToken?: string | null; creds?: KioskCreds | null; timeoutMs?: number; headers?: Record<string, string> } = {}): Promise<T> {
   const creds = opts.creds ?? loadCreds();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (creds) {
@@ -43,6 +43,7 @@ export async function kioskFetch<T>(path: string, opts: { method?: string; body?
     headers["X-Kiosk-Token"] = creds.token;
   }
   if (opts.pilgrimToken) headers["X-Pilgrim-Token"] = opts.pilgrimToken;
+  Object.assign(headers, opts.headers ?? {});
   let res: Response;
   try {
     res = await fetch(path, {

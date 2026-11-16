@@ -7,6 +7,7 @@ import { audit } from "../audit";
 import { hashPassword, passwordProblems, type AdminUser } from "../auth";
 import type { Role } from "@/shared/rbac";
 import { env } from "../env";
+import { recordOccupancy } from "./crowd";
 
 // ---------- Ghats (manual crowd entry) ----------
 export async function updateGhatOccupancy(user: AdminUser, id: string, occupancy: number) {
@@ -14,11 +15,8 @@ export async function updateGhatOccupancy(user: AdminUser, id: string, occupancy
   const [g] = await db.select().from(schema.ghats).where(eq(schema.ghats.id, id));
   if (!g) throw notFound();
   if (occupancy > g.capacity * 2) throw badRequest("That number is more than twice the ghat's capacity. Please check it.");
-  const [row] = await db
-    .update(schema.ghats)
-    .set({ occupancy, occupancySource: "manual", occupancyUpdatedAt: new Date(), occupancyUpdatedBy: user.id })
-    .where(eq(schema.ghats.id, id))
-    .returning();
+  await recordOccupancy(id, occupancy, "manual", { by: user.id });
+  const [row] = await db.select().from(schema.ghats).where(eq(schema.ghats.id, id));
   await audit({ actorType: "admin", actorId: user.id, action: "ghat.occupancy", entityType: "ghat", entityId: id, details: { from: g.occupancy, to: occupancy } });
   return row;
 }
@@ -207,6 +205,10 @@ export async function runRetention() {
     .returning({ id: schema.helpRequests.id });
   const otps = await db.delete(schema.otpChallenges).where(lt(schema.otpChallenges.createdAt, new Date(now.getTime() - 24 * 3600_000))).returning({ id: schema.otpChallenges.id });
   const sessions = await db.delete(schema.sessions).where(lt(schema.sessions.expiresAt, now)).returning({ id: schema.sessions.id });
+  // Found-person photos are kept only while a case is open.
+  await db.update(schema.lostCases).set({ foundPhotoEnc: null }).where(and(lt(schema.lostCases.closedAt, cutoff), isNotNull(schema.lostCases.foundPhotoEnc)));
+  // Raw sensor readings: 7 days. (Crowd history has no personal data and is kept for planning.)
+  await db.delete(schema.sensorReadings).where(lt(schema.sensorReadings.at, new Date(now.getTime() - 7 * 86400_000)));
   const result = { familiesDeleted: families.length, lostCasesAnonymised: lost.length, helpRequestsCleared: help.length, otpChallengesDeleted: otps.length, sessionsDeleted: sessions.length };
   await audit({ actorType: "system", action: "retention.run", details: result });
   return result;

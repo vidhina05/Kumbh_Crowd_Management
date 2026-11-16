@@ -41,3 +41,16 @@ tests/e2e/screenshots/
 Thumbs.db
 .idea/
 .vscode/
+
+# Generated / temporary build folders
+.demo-build/
+.api-aside/
+src/demo/*.generated.ts
+public/models/
+public/vendor/
+.proxy-aside.ts
+tests/e2e/*.tmp.mjs
+out/
+.env
+.env.*
+!.env.example

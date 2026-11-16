@@ -1,4 +1,5 @@
 "use client";
+import { withBase } from "@/shared/base";
 import { useEffect, useState } from "react";
 import { api, istDateTime, usePoll } from "@/admin/client";
 import { useMe } from "@/admin/Shell";
@@ -98,8 +99,8 @@ export default function FamiliesPage() {
                 <>
                   <h2>Linked cases</h2>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {detail.lostCases.map((c) => <a key={c.id} className="chip bad" href="/admin/lost">{c.code} · {c.personName} · {c.status}</a>)}
-                    {detail.helpRequests.map((h) => <a key={h.id} className="chip info" href="/admin/help">{h.code} · {h.type.replace("_", " ")} · {h.status}</a>)}
+                    {detail.lostCases.map((c) => <a key={c.id} className="chip bad" href={withBase("/admin/lost/")}>{c.code} · {c.personName} · {c.status}</a>)}
+                    {detail.helpRequests.map((h) => <a key={h.id} className="chip info" href={withBase("/admin/help/")}>{h.code} · {h.type.replace("_", " ")} · {h.status}</a>)}
                   </div>
                 </>
               )}

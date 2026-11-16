@@ -40,7 +40,29 @@ const schema = z.object({
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
 
+  MSG91_FLOW_DIVERSION: z.string().optional(),
+  MSG91_FLOW_PASS: z.string().optional(),
+  MSG91_FLOW_THANKS: z.string().optional(),
+
   RETENTION_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(48),
+
+  // Aadhaar Secure QR: UIDAI's public certificate (PEM, \n allowed) to verify card signatures.
+  AADHAAR_UIDAI_CERT_PEM: z.string().optional(),
+  // Staging/demo only: accept test cards signed by a local test key (always labelled "Test card").
+  AADHAAR_ALLOW_TEST_CARDS: z.enum(["true", "false"]).default("false"),
+
+  // Roles that must use two-step sign-in (comma separated), e.g. "super_admin,operations".
+  MFA_REQUIRED_ROLES: z.string().default("super_admin"),
+
+  // Built-in crowd simulator for training and demos. Its numbers are always labelled "Simulated".
+  SENSOR_SIMULATOR: z.enum(["true", "false"]).default("false"),
+
+  // Optional shared rate-limit store for multi-instance deployments (Upstash Redis REST API).
+  UPSTASH_REDIS_REST_URL: z.string().url().optional(),
+  UPSTASH_REDIS_REST_TOKEN: z.string().optional(),
+
+  // Set only by the in-browser demo build (GitHub Pages). Refused on a real server.
+  DEMO_MODE: z.enum(["true", "false"]).default("false"),
 });
 
 export type Env = z.infer<typeof schema>;
@@ -55,7 +77,11 @@ export function env(): Env {
     throw new Error(`Invalid configuration. Fix these environment variables (see .env.example):\n${problems}`);
   }
   const e = parsed.data;
-  if (e.NODE_ENV === "production") {
+  const inBrowser = typeof window !== "undefined";
+  if (e.DEMO_MODE === "true" && !inBrowser) {
+    throw new Error("Invalid configuration: DEMO_MODE is only for the in-browser demo build.");
+  }
+  if (e.NODE_ENV === "production" && e.DEMO_MODE !== "true") {
     if (!e.DATABASE_URL || e.DATABASE_URL.startsWith("pglite")) {
       throw new Error("Invalid configuration: DATABASE_URL must point to a Postgres server in production.");
     }
@@ -78,7 +104,19 @@ export function integrations() {
     otpDevMode: e.OTP_DEV_MODE === "true",
     voice: Boolean(e.BHASHINI_USER_ID && e.BHASHINI_API_KEY),
     assistant: Boolean(e.GEMINI_API_KEY),
+    aadhaar: Boolean(e.AADHAAR_UIDAI_CERT_PEM) || e.AADHAAR_ALLOW_TEST_CARDS === "true",
+    aadhaarTestCards: e.AADHAAR_ALLOW_TEST_CARDS === "true",
+    simulator: e.SENSOR_SIMULATOR === "true",
+    demo: e.DEMO_MODE === "true",
   };
+}
+
+export function mfaRequiredFor(role: string): boolean {
+  return env()
+    .MFA_REQUIRED_ROLES.split(",")
+    .map((r) => r.trim())
+    .filter(Boolean)
+    .includes(role);
 }
 
 export function resetEnvCacheForTests() {

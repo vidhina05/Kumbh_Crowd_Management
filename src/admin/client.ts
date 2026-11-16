@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { BASE_PATH, withBase } from "@/shared/base";
 
 export class AdminApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -23,7 +24,7 @@ export async function api<T>(url: string, opts: { method?: string; body?: unknow
   }
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && typeof window !== "undefined" && !url.includes("/auth/login")) {
-    location.href = `/admin/login?next=${encodeURIComponent(location.pathname)}`;
+    location.href = withBase(`/admin/login?next=${encodeURIComponent(location.pathname.slice(BASE_PATH.length))}`);
   }
   if (!res.ok) {
     const e = (data as { error?: { code?: string; message?: string } }).error ?? {};

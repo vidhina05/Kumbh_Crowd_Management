@@ -9,7 +9,7 @@ const input = z.object({ text: z.string().trim().min(1).max(600), lang: z.enum(L
 
 export const POST = handler(async (req: Request) => {
   const kiosk = await requireKiosk(req);
-  rateLimit(`tts:${kiosk.id}`, 60, 60_000);
+  await rateLimit(`tts:${kiosk.id}`, 60, 60_000);
   const { text, lang } = await parseBody(req, input);
   return json({ audio: await textToSpeech(text, lang), format: "wav" });
 });

@@ -6,7 +6,7 @@ import { phoneInput } from "@/shared/validation";
 
 export const POST = handler(async (req: Request) => {
   const kiosk = await requireKiosk(req);
-  rateLimit(`otp-start:${kiosk.id}`, 20, 60_000);
+  await rateLimit(`otp-start:${kiosk.id}`, 20, 60_000);
   const { phone } = await parseBody(req, phoneInput);
   return json(await startOtp(phone, kiosk.id));
 });

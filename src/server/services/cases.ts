@@ -8,16 +8,15 @@ import { normalisePhone } from "./otp";
 import { familyIdByPass } from "./registration";
 import type { AdminUser } from "../auth";
 import { canUpdateHelpType } from "@/shared/rbac";
+import { isUniqueViolation } from "@/server/db/errors";
 
-const isUniqueViolation = (e: unknown) => typeof e === "object" && e !== null && "code" in e && (e as { code?: string }).code === "23505";
-const causeCode = (e: unknown): string | undefined => (e as { cause?: { code?: string } })?.cause?.code ?? (e as { code?: string })?.code;
 
 async function insertWithCode<T>(prefix: string, insert: (code: string) => Promise<T>): Promise<T> {
   for (let i = 0; i < 8; i++) {
     try {
       return await insert(`${prefix}-${randomDigits(4)}`);
     } catch (e) {
-      if (causeCode(e) === "23505" || isUniqueViolation(e)) continue;
+      if (isUniqueViolation(e)) continue;
       throw e;
     }
   }
@@ -163,8 +162,8 @@ export async function listLost(filter: { status?: string; q?: string }) {
     .orderBy(desc(schema.lostCases.createdAt))
     .limit(200);
   return rows.map((r) => {
-    const { reporterPhoneEnc: _omit, ...c } = r.c;
-    return { ...c, assigneeName: r.assignee, passCode: r.pass, memberName: r.memberName, hasPhoto: Boolean(r.hasPhoto) };
+    const { reporterPhoneEnc: _omit, foundPhotoEnc, ...c } = r.c;
+    return { ...c, assigneeName: r.assignee, passCode: r.pass, memberName: r.memberName, hasPhoto: Boolean(r.hasPhoto), hasFoundPhoto: Boolean(foundPhotoEnc) };
   });
 }
 
@@ -214,11 +213,13 @@ export async function updateLost(user: AdminUser, id: string, patch: { status?: 
       assignedTo: patch.assignedTo === undefined ? c.assignedTo : patch.assignedTo,
       updatedAt: new Date(),
       closedAt: status === "reunited" || status === "closed" ? new Date() : null,
+      reunitedAt: status === "reunited" ? (c.reunitedAt ?? new Date()) : c.reunitedAt,
+      foundAt: status === "found" ? (c.foundAt ?? new Date()) : c.foundAt,
     })
     .where(eq(schema.lostCases.id, id))
     .returning();
   await audit({ actorType: "admin", actorId: user.id, action: "lost.update", entityType: "lost", entityId: id, details: { from: c.status, to: status } });
-  const { reporterPhoneEnc: _omit, ...safe } = row;
+  const { reporterPhoneEnc: _omit, foundPhotoEnc: _omit2, ...safe } = row;
   return safe;
 }
 
@@ -259,4 +260,30 @@ export async function listNotes(caseType: "help" | "lost", caseId: string) {
     .leftJoin(schema.adminUsers, eq(schema.caseNotes.authorId, schema.adminUsers.id))
     .where(and(eq(schema.caseNotes.caseType, caseType), eq(schema.caseNotes.caseId, caseId)))
     .orderBy(desc(schema.caseNotes.createdAt));
+}
+
+/** A volunteer found someone with no report yet: open a "found" case so face matching and the family can trace them. */
+export async function createFoundCase(user: AdminUser, input: { description: string; foundLocation: string; age?: number; name?: string }) {
+  const db = await getDb();
+  const row = await insertWithCode("L", async (code) => {
+    const [r] = await db
+      .insert(schema.lostCases)
+      .values({
+        code,
+        personName: input.name?.trim() || "Unknown (found)",
+        age: input.age ?? null,
+        description: input.description,
+        lastSeen: input.foundLocation,
+        foundLocation: input.foundLocation,
+        reporterName: user.name,
+        status: "found",
+        foundAt: new Date(),
+        assignedTo: user.id,
+      })
+      .returning();
+    return r;
+  });
+  await audit({ actorType: "admin", actorId: user.id, action: "lost.found_create", entityType: "lost", entityId: row.id });
+  const { reporterPhoneEnc: _a, foundPhotoEnc: _b, ...safe } = row;
+  return safe;
 }

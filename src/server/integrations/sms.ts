@@ -25,3 +25,26 @@ export async function sendOtpSms(phoneE164: string, code: string): Promise<SmsRe
     return { sent: false, reason: "provider_error" };
   }
 }
+
+/**
+ * Transactional SMS (diversion notices, pass details, thank-you notes) through MSG91 Flow templates.
+ * Each message type needs its own DLT-registered template id in the environment.
+ */
+const FLOW_ENV = { diversion: "MSG91_FLOW_DIVERSION", pass: "MSG91_FLOW_PASS", thanks: "MSG91_FLOW_THANKS" } as const;
+
+export async function sendTextSms(phoneE164: string, kind: keyof typeof FLOW_ENV, vars: Record<string, string>): Promise<SmsResult> {
+  const e = env();
+  const templateId = e[FLOW_ENV[kind]];
+  if (e.SMS_PROVIDER === "none" || !templateId) return { sent: false, reason: "not_configured" };
+  try {
+    const res = await fetch("https://control.msg91.com/api/v5/flow", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", authkey: e.MSG91_AUTH_KEY! },
+      body: JSON.stringify({ template_id: templateId, recipients: [{ mobiles: phoneE164.replace("+", ""), ...vars }] }),
+      signal: AbortSignal.timeout(8000),
+    });
+    return res.ok ? { sent: true } : { sent: false, reason: "provider_error" };
+  } catch {
+    return { sent: false, reason: "provider_error" };
+  }
+}

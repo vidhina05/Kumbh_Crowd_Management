@@ -37,6 +37,10 @@ export function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+export function randomBytesArray(n: number): Uint8Array {
+  return new Uint8Array(randomBytes(n));
+}
+
 export function randomToken(bytes = 32): string {
   return randomBytes(bytes).toString("base64url");
 }

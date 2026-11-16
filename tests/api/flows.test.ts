@@ -62,6 +62,7 @@ beforeAll(async () => {
   kioskToken = (await ensureKiosk("K-17", "Registration kiosk", "Sector 4 plaza"))!;
   await ensureSuperAdmin("root@example.org", "Root", "SuperSecret123");
   const r = await login("root@example.org", "SuperSecret123");
+  if (r.mfaRequired) throw new Error("test admin should not need two-step sign-in");
   admin = r.user;
   adminToken = r.token;
 });
@@ -202,8 +203,9 @@ describe("help and lost-person requests", () => {
 describe("admin access control", () => {
   it("a help-desk user can work help requests but cannot create kiosks or staff", async () => {
     await createUser(admin, { email: "desk@example.org", name: "Desk", role: "help_desk", password: "HelpDeskPass123" });
-    const { token } = await login("desk@example.org", "HelpDeskPass123");
-    cookieToken = token;
+    const lr = await login("desk@example.org", "HelpDeskPass123");
+    if (lr.mfaRequired) throw new Error("unexpected two-step sign-in");
+    cookieToken = lr.token;
     expect((await adminKiosks.POST(areq("/api/admin/kiosks", "POST", { id: "K-99", name: "x", location: "y" }))).status).toBe(403);
     expect((await adminUsers.GET()).status).toBe(403);
     expect((await adminAlerts.POST(areq("/api/admin/alerts", "POST", { severity: "info", title: "Hello", message: "World", audience: "staff" }))).status).toBe(403);

@@ -1,8 +1,10 @@
 "use client";
+import { withBase } from "@/shared/base";
 import { useEffect, useState } from "react";
 import { api, ago, istDateTime, usePoll } from "@/admin/client";
 import { useMe } from "@/admin/Shell";
 import { AssignSelect, Notes } from "@/admin/CaseTools";
+import { FaceSearch, FoundForm, Reunited } from "@/admin/LostTools";
 
 type Case = {
   id: string; code: string; personName: string; age: number | null; description: string; lastSeen: string; reporterName: string; reporterPhoneLast4: string | null;
@@ -27,6 +29,7 @@ export default function LostPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [photo, setPhoto] = useState<string | null>(null);
   const [linkCode, setLinkCode] = useState("");
+  const [foundOpen, setFoundOpen] = useState(false);
   const [familyMembers, setFamilyMembers] = useState<{ id: string; name: string; age: number }[]>([]);
   const c = data?.cases.find((x) => x.id === sel) ?? null;
   const editable = can("lost.update");
@@ -43,7 +46,7 @@ export default function LostPage() {
   };
   const showPhoto = async () => {
     if (!c) return;
-    const res = await fetch(`/api/admin/lost/${c.id}/photo`, { credentials: "same-origin" });
+    const res = await fetch(withBase(`/api/admin/lost/${c.id}/photo`), { credentials: "same-origin" });
     if (!res.ok) { setMsg("The photo can't be shown."); return; }
     setPhoto(URL.createObjectURL(await res.blob()));
   };
@@ -53,10 +56,12 @@ export default function LostPage() {
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h1 style={{ margin: 0, fontWeight: 400, fontSize: 28, flex: 1 }}>Lost &amp; found</h1>
         <input className="input" style={{ height: 40, maxWidth: 260 }} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name or case number" aria-label="Search cases" />
+        {editable && <button className="btn btn-filled" onClick={() => setFoundOpen(true)}><span className="icon">person_pin_circle</span> Someone found</button>}
         <div className="a-tabs" role="group" aria-label="Filter">
           {([["active", "Open"], ["reunited", "Reunited"], ["", "All"]] as const).map(([k, l]) => <button key={k} aria-pressed={status === k} onClick={() => setStatus(k)}>{l}</button>)}
         </div>
       </div>
+      {foundOpen && <FoundForm onCancel={() => setFoundOpen(false)} onCreated={(id) => { setFoundOpen(false); setStatus("active"); setSel(id); void reload(); }} />}
       <div className="a-grid-2">
         <section className="glass a-pane">
           {error && <div className="banner bad">{error}</div>}
@@ -88,7 +93,7 @@ export default function LostPage() {
                 <dt>Reported</dt><dd>{istDateTime(c.createdAt)}{c.kioskId && ` at kiosk ${c.kioskId}`}</dd>
                 <dt>Family</dt>
                 <dd>
-                  {c.passCode ? <><a href="/admin/families">{c.passCode}</a>{c.memberName ? ` · ${c.memberName}` : " · person not matched yet"}</> : "Not linked to a registration"}
+                  {c.passCode ? <><a href={withBase("/admin/families/")}>{c.passCode}</a>{c.memberName ? ` · ${c.memberName}` : " · person not matched yet"}</> : "Not linked to a registration"}
                   {editable && !c.passCode && (
                     <form style={{ display: "flex", gap: 8, marginTop: 8 }} onSubmit={(e) => { e.preventDefault(); void patch({ passCode: linkCode }); }}>
                       <input className="input" style={{ height: 36, maxWidth: 200 }} value={linkCode} onChange={(e) => setLinkCode(e.target.value.toUpperCase())} placeholder="Pass no. KMB-…" aria-label="Pass number to link" />
@@ -118,6 +123,8 @@ export default function LostPage() {
                   {NEXT[c.status].map((n) => <button key={n.to} className={`btn ${n.to === "reunited" || n.to === "found" ? "btn-filled" : n.to === "closed" ? "btn-text" : "btn-tonal"}`} onClick={() => patch({ status: n.to })}>{n.label}</button>)}
                 </div>
               )}
+              {c.status === "reunited" && <Reunited caseId={c.id} />}
+              {can("faces.search") && ["open", "searching", "found"].includes(c.status) && <FaceSearch caseId={c.id} onChanged={reload} />}
               <Notes kind="lost" id={c.id} canWrite={editable} />
             </>
           )}

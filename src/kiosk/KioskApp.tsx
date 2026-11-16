@@ -1,10 +1,13 @@
 "use client";
+import { IS_DEMO, withBase } from "@/shared/base";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
 import "./kiosk.css";
 import { ApiError, clearCreds, flushOutbox, kioskFetch, loadCreds, queue, saveCreds, type KioskCreds } from "./api";
 import { browserVoiceFor, speak, stopSpeaking } from "./voice";
 import { CameraCapture, Dialog, Icon, Keypad, MicButton } from "./ui";
+import { AadhaarScan, FaceCapture, templateFromPhoto, type AadhaarResult } from "./Identity";
+import { QrScanner } from "@/shared/client/QrScanner";
 import { translator, type DictKey } from "@/i18n";
 import { LANGUAGES, type LangCode } from "@/shared/languages";
 import { RELATIONS } from "@/shared/validation";
@@ -18,7 +21,7 @@ const PASS_RESET_SECONDS = 45;
 type Level = "calm" | "moderate" | "busy" | "very_busy";
 type Config = {
   kiosk: { id: string; name: string; location: string };
-  integrations: { sms: boolean; otpDevMode: boolean; voice: boolean; assistant: boolean };
+  integrations: { sms: boolean; otpDevMode: boolean; voice: boolean; assistant: boolean; aadhaar?: boolean; aadhaarTestCards?: boolean; demo?: boolean };
   today: string;
   alerts: { id: string; severity: string; title: string; message: string }[];
   ghats: { id: string; name: string; nameHi: string; percent: number; level: Level; source: string; updatedMinutesAgo: number | null }[];
@@ -34,14 +37,16 @@ type Pass = {
   ghat: { id: string; name: string; nameHi: string; gate: string; walkNote: string };
   members: { name: string; age: number; relation: string; needs: string[]; isLeader: boolean; hasBand: boolean }[];
   replaces?: string;
+  diversion?: { code: string; fromGhat: string; confirmed: boolean } | null;
 };
-type MemberDraft = { key: number; name: string; age: string; relation: (typeof RELATIONS)[number]; wheelchair: boolean; photo?: string };
+type MemberDraft = { key: number; name: string; age: string; relation: (typeof RELATIONS)[number]; wheelchair: boolean; photo?: string; face?: string; faceState?: "working" | "ok" | "bad"; gender?: "M" | "F" | "T" };
 type Screen =
-  | "setup" | "welcome" | "consent" | "phone" | "otp" | "family" | "slot" | "review" | "pass"
+  | "setup" | "welcome" | "consent" | "identify" | "aadhaar" | "aadhaarPhone" | "phone" | "otp" | "family" | "slot" | "review" | "pass"
+  | "findHow" | "findPass" | "findFace"
   | "help" | "helpSent" | "lost" | "lostSent" | "findView" | "changeDone";
 type Flow = "register" | "find";
 
-const STEP_OF: Partial<Record<Screen, number>> = { welcome: 1, consent: 2, phone: 3, otp: 3, family: 4, slot: 5, review: 5, pass: 6 };
+const STEP_OF: Partial<Record<Screen, number>> = { welcome: 1, consent: 2, identify: 3, aadhaar: 3, aadhaarPhone: 3, phone: 3, otp: 3, family: 4, slot: 5, review: 5, pass: 6 };
 const uid = (): string => {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
   const b = crypto.getRandomValues(new Uint8Array(16));
@@ -68,6 +73,12 @@ export default function KioskApp() {
 
   // Registration state (cleared on every reset)
   const [photoConsent, setPhotoConsent] = useState(false);
+  const [faceConsent, setFaceConsent] = useState(false);
+  const [aadhaar, setAadhaar] = useState<AadhaarResult | null>(null);
+  const [findPassCode, setFindPassCode] = useState("");
+  const [last4, setLast4] = useState("");
+  const [faceTpl, setFaceTpl] = useState<string | null>(null);
+  const [divSeen, setDivSeen] = useState(false);
   const [phone, setPhone] = useState("");
   const [challenge, setChallenge] = useState<{ id: string; last4: string; devCode?: string } | null>(null);
   const [code, setCode] = useState("");
@@ -90,6 +101,19 @@ export default function KioskApp() {
   useEffect(() => {
     const c = loadCreds();
     setCreds(c);
+    setTheme((document.documentElement.dataset.theme as "light" | "dark") ?? "light");
+    if (!c && IS_DEMO) {
+      // Demo build: this browser is kiosk K-17 of the in-browser backend.
+      const iv = setInterval(() => {
+        const api = (window as unknown as { __demoApi?: { info: () => { kiosk: KioskCreds } } }).__demoApi;
+        if (!api) return;
+        clearInterval(iv);
+        const k = api.info().kiosk;
+        saveCreds(k);
+        setCreds(k);
+      }, 200);
+      return () => clearInterval(iv);
+    }
     if (!c || new URLSearchParams(location.search).get("setup") === "1") setScreen("setup");
     setTheme((document.documentElement.dataset.theme as "light" | "dark") ?? "light");
     setOnline(navigator.onLine);
@@ -128,7 +152,7 @@ export default function KioskApp() {
     stopSpeaking();
     setSpeaking(false);
     setScreen("welcome"); setFlow("register"); setLang("hi"); setError(null); setBusy(false);
-    setPhotoConsent(false); setPhone(""); setChallenge(null); setCode(""); setPilgrimToken(null);
+    setPhotoConsent(false); setFaceConsent(false); setAadhaar(null); setFindPassCode(""); setLast4(""); setFaceTpl(null); setDivSeen(false); setPhone(""); setChallenge(null); setCode(""); setPilgrimToken(null);
     setMembers([]); setEditing(null); setHomeTown(""); setDay(""); setSlotData(null); setChosen(null);
     setPass(null); setQr(""); setHelpType(null); setHelpText(""); setCaseResult(null);
     setLost({ personName: "", age: "", description: "", lastSeen: "", reporterName: "", reporterPhone: "" });
@@ -183,6 +207,8 @@ export default function KioskApp() {
       case "rate_limited": return t("errTooMany");
       case "not_found": return t("errNotFound");
       case "pilgrim_session": return t("errOtpExpired");
+      case "face_no_match": return t("findFaceNone");
+      case "aadhaar_invalid": case "aadhaar_signature": case "aadhaar_off": return t("aadhaarBad");
       default: return lang === "en" ? e.message : t("errGeneric");
     }
   };
@@ -216,13 +242,45 @@ export default function KioskApp() {
       setPass(await kioskFetch<Pass>("/api/kiosk/registrations/me", { pilgrimToken: r.pilgrimToken }));
       go("findView");
     } else {
-      if (!members.length) {
-        const leader: MemberDraft = { key: Date.now(), name: "", age: "", relation: "other", wheelchair: false };
-        setMembers([leader]);
-        setEditing(leader);
-      }
-      go("family");
+      startFamily();
     }
+  });
+
+  const startFamily = (prefill?: AadhaarResult["person"]) => {
+    if (!members.length) {
+      const leader: MemberDraft = { key: Date.now(), name: prefill?.name ?? "", age: prefill?.age != null ? String(prefill.age) : "", relation: "other", wheelchair: false, gender: prefill?.gender ?? undefined };
+      setMembers([leader]);
+      setEditing(leader);
+    }
+    go("family");
+  };
+
+  const attachAadhaarPhone = () => run(async () => {
+    if (!aadhaar) return;
+    const r = await kioskFetch<{ pilgrimToken: string; phoneLast4: string }>("/api/kiosk/aadhaar/phone", { body: { phone }, headers: { "X-Aadhaar-Token": aadhaar.aadhaarToken } });
+    setPilgrimToken(r.pilgrimToken);
+    startFamily(aadhaar.person);
+  });
+
+  const openFound = async (token: string) => {
+    setPilgrimToken(token);
+    setPass(await kioskFetch<Pass>("/api/kiosk/registrations/me", { pilgrimToken: token }));
+    setDivSeen(false);
+    go("findView");
+  };
+  const findByPass = () => run(async () => {
+    const r = await kioskFetch<{ pilgrimToken: string }>("/api/kiosk/find/pass", { body: { passCode: findPassCode.trim().toUpperCase(), last4 } });
+    await openFound(r.pilgrimToken);
+  });
+  const findByFace = () => run(async () => {
+    if (!faceTpl) return;
+    const r = await kioskFetch<{ pilgrimToken: string }>("/api/kiosk/find/face", { body: { template: faceTpl, last4 } });
+    await openFound(r.pilgrimToken);
+  });
+  const confirmDiversion = () => run(async () => {
+    await kioskFetch("/api/kiosk/registrations/confirm-change", { body: {}, pilgrimToken });
+    setPass((p) => (p && p.diversion ? { ...p, diversion: { ...p.diversion, confirmed: true } } : p));
+    setDivSeen(true);
   });
 
   const loadSlots = (d: string) => run(async () => {
@@ -236,7 +294,7 @@ export default function KioskApp() {
     if (!chosen) return;
     const body = {
       language: lang,
-      consent: { version: "2026-01", accepted: true, photo: photoConsent },
+      consent: { version: "2026-01", accepted: true, photo: photoConsent, face: faceConsent },
       homeTown,
       slotId: chosen.slot.id,
       members: members.map((m, i) => ({
@@ -244,11 +302,13 @@ export default function KioskApp() {
         age: Number(m.age),
         relation: i === 0 ? "self" : m.relation,
         needs: m.wheelchair ? ["wheelchair"] : [],
-        ...(photoConsent && m.photo ? { photo: m.photo } : {}),
+        ...(photoConsent && m.photo && Number(m.age) < 12 ? { photo: m.photo } : {}),
+        ...(faceConsent && m.face ? { face: m.face } : {}),
+        ...(m.gender ? { gender: m.gender } : {}),
       })),
     };
     setPass(await kioskFetch<Pass>("/api/kiosk/registrations", { body, pilgrimToken }));
-    setMembers((ms) => ms.map((m) => ({ ...m, photo: undefined }))); // drop photos from memory once sent
+    setMembers((ms) => ms.map((m) => ({ ...m, photo: undefined, face: undefined }))); // drop photos and face data from memory once sent
     go("pass");
   });
 
@@ -297,6 +357,12 @@ export default function KioskApp() {
     switch (screen) {
       case "welcome": return { title: t("welcomeTitle"), body: t("welcomeBody") };
       case "consent": return { title: t("consentTitle"), body: t("consentBody") };
+      case "identify": return { title: t("idTitle"), body: t("idBody") };
+      case "aadhaar": return { title: t("aadhaarTitle"), body: t("aadhaarBody") };
+      case "aadhaarPhone": return { title: t("aadhaarPhoneTitle"), body: t("aadhaarPhoneBody") };
+      case "findHow": return { title: t("findHowTitle"), body: t("findHowBody") };
+      case "findPass": return { title: t("findPassTitle"), body: t("findPassBody") };
+      case "findFace": return { title: t("findFaceTitle"), body: t("findFaceBody") };
       case "phone": return { title: flow === "find" ? t("findTitle") : t("phoneTitle"), body: flow === "find" ? t("findBody") : t("phoneBody") };
       case "otp": return { title: t("otpTitle"), body: t("otpBody", { last4: challenge?.last4 ?? "" }) };
       case "family": return { title: t("familyTitle"), body: t("familyBody") };
@@ -307,7 +373,7 @@ export default function KioskApp() {
       case "helpSent": return { title: t("helpSent"), body: caseResult?.queued ? t("helpQueued") : t("helpSentBody", { code: caseResult?.code ?? "" }) };
       case "lost": return { title: t("lostTitle"), body: t("lostBody") };
       case "lostSent": return { title: t("lostSent", { name: caseResult?.name ?? "" }), body: caseResult?.queued ? t("helpQueued") : t("lostSentBody", { code: caseResult?.code ?? "" }) };
-      case "findView": return { title: t("yourRegistration"), body: pass && pass.slotChangesLeft > 0 ? t("changesLeft") : t("noChangesLeft") };
+      case "findView": return pass?.diversion && !pass.diversion.confirmed ? { title: t("divertedTitle"), body: t("divertedBody", { from: pass.diversion.fromGhat, to: lang === "hi" ? pass.ghat.nameHi : pass.ghat.name, time: `${pass.slot.start}–${pass.slot.end}` }) } : { title: t("yourRegistration"), body: pass && pass.slotChangesLeft > 0 ? t("changesLeft") : t("noChangesLeft") };
       default: return { title: "", body: "" };
     }
   })();
@@ -320,7 +386,7 @@ export default function KioskApp() {
     setTimeout(() => setSpeaking(false), 8000);
   };
 
-  if (screen === "setup") return <Setup onDone={(c) => { saveCreds(c); setCreds(c); history.replaceState(null, "", "/kiosk"); reset(); }} current={creds} />;
+  if (screen === "setup") return <Setup onDone={(c) => { saveCreds(c); setCreds(c); history.replaceState(null, "", withBase("/kiosk/")); reset(); }} current={creds} />;
 
   const step = STEP_OF[screen];
   const inRegistration = flow === "register" && step !== undefined;
@@ -423,8 +489,73 @@ export default function KioskApp() {
                   <input type="checkbox" checked={photoConsent} onChange={(e) => setPhotoConsent(e.target.checked)} />
                   <span>{t("consentPhoto")}</span>
                 </label>
+                <label className="k-check">
+                  <input type="checkbox" checked={faceConsent} onChange={(e) => setFaceConsent(e.target.checked)} />
+                  <span><Icon name="face" size="sm" /> {t("consentFace")}</span>
+                </label>
                 <p className="muted" style={{ margin: 0 }}>{t("consentDecline")}</p>
               </>
+            )}
+
+            {screen === "identify" && (
+              <div className="k-lang-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))" }}>
+                <button className="k-option" onClick={() => { setAadhaar(null); go("aadhaar"); }} disabled={config?.integrations.aadhaar === false}>
+                  <Icon name="qr_code_scanner" size="lg" /><b style={{ fontSize: 20 }}>{t("idAadhaar")}</b><small>{t("idAadhaarHint")}</small>
+                </button>
+                <button className="k-option" onClick={() => go("phone")}>
+                  <Icon name="smartphone" size="lg" /><b style={{ fontSize: 20 }}>{t("idPhone")}</b><small>{t("idPhoneHint")}</small>
+                </button>
+              </div>
+            )}
+
+            {screen === "aadhaar" && (
+              <AadhaarScan t={t} testCards={Boolean(config?.integrations.aadhaarTestCards)} onError={(m) => setError(m === "offline" ? t("offline") : m)}
+                onVerified={(r) => { setAadhaar(r); setError(null); go("aadhaarPhone"); }} />
+            )}
+
+            {screen === "aadhaarPhone" && aadhaar && (
+              <div style={{ display: "grid", gap: 16, maxWidth: 440 }}>
+                <div className="banner good" role="status"><Icon name="verified" /> {t("aadhaarOk", { name: aadhaar.person.name, age: aadhaar.person.age ?? "—" })} · ••••{aadhaar.person.last4}{aadhaar.verifiedBy === "test" ? ` · ${t("aadhaarTest")}` : ""}</div>
+                <div className="field">
+                  <label htmlFor="aphone">{t("phoneLabel")}</label>
+                  <input id="aphone" className="input mono" inputMode="numeric" autoComplete="off" value={phone} onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="98765 43210" />
+                </div>
+                <Keypad value={phone} onChange={setPhone} max={10} t={t} onDone={phone.length === 10 ? attachAadhaarPhone : undefined} />
+              </div>
+            )}
+
+            {screen === "findHow" && (
+              <div className="k-lang-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                <button className="k-option" onClick={() => go("phone")}><Icon name="sms" size="lg" /><b style={{ fontSize: 18 }}>{t("findByPhone")}</b></button>
+                <button className="k-option" onClick={() => { setFindPassCode(""); setLast4(""); go("findPass"); }}><Icon name="qr_code_scanner" size="lg" /><b style={{ fontSize: 18 }}>{t("findByPass")}</b></button>
+                <button className="k-option" onClick={() => { setFaceTpl(null); setLast4(""); go("findFace"); }}><Icon name="face" size="lg" /><b style={{ fontSize: 18 }}>{t("findByFace")}</b></button>
+              </div>
+            )}
+
+            {screen === "findPass" && (
+              <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", alignItems: "start" }}>
+                <div style={{ display: "grid", gap: 12 }}>
+                  {!findPassCode ? <QrScanner label={t("findPassTitle")} onResult={(txt) => setFindPassCode(txt.trim().toUpperCase().slice(0, 20))} /> : <div className="banner good"><Icon name="qr_code_2" /> <span className="mono">{findPassCode}</span></div>}
+                  <div className="field">
+                    <label htmlFor="pcode">{t("passNumber")}</label>
+                    <input id="pcode" className="input mono" autoComplete="off" value={findPassCode} maxLength={20} onChange={(e) => setFindPassCode(e.target.value.toUpperCase())} placeholder="KMB-…" />
+                  </div>
+                </div>
+                <div style={{ display: "grid", gap: 12 }}>
+                  <div className="field"><label htmlFor="l4">{t("last4Label")}</label><input id="l4" className="input mono" inputMode="numeric" value={last4} onChange={(e) => setLast4(e.target.value.replace(/\D/g, "").slice(0, 4))} style={{ fontSize: 24, letterSpacing: 10 }} /></div>
+                  <Keypad value={last4} onChange={setLast4} max={4} t={t} onDone={last4.length === 4 && findPassCode.length >= 5 ? findByPass : undefined} />
+                </div>
+              </div>
+            )}
+
+            {screen === "findFace" && (
+              <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", alignItems: "start" }}>
+                {!faceTpl ? <FaceCapture t={t} onError={setError} onTemplate={(tp) => { setError(null); setFaceTpl(tp); }} /> : <div className="banner good"><Icon name="face" /> {t("faceSaved")} <button className="btn btn-text small" onClick={() => setFaceTpl(null)}>{t("retakePhoto")}</button></div>}
+                <div style={{ display: "grid", gap: 12 }}>
+                  <div className="field"><label htmlFor="l4f">{t("last4Label")}</label><input id="l4f" className="input mono" inputMode="numeric" value={last4} onChange={(e) => setLast4(e.target.value.replace(/\D/g, "").slice(0, 4))} style={{ fontSize: 24, letterSpacing: 10 }} /></div>
+                  <Keypad value={last4} onChange={setLast4} max={4} t={t} onDone={last4.length === 4 && faceTpl ? findByFace : undefined} />
+                </div>
+              </div>
             )}
 
             {screen === "phone" && (
@@ -460,7 +591,7 @@ export default function KioskApp() {
                 </div>
                 {members.map((m, i) =>
                   editing?.key === m.key ? (
-                    <MemberForm key={m.key} m={editing} leader={i === 0} t={t} lang={lang} voice={Boolean(config?.integrations.voice)} photoAllowed={photoConsent}
+                    <MemberForm key={m.key} m={editing} leader={i === 0} t={t} lang={lang} voice={Boolean(config?.integrations.voice)} photoAllowed={photoConsent} faceAllowed={faceConsent}
                       onChange={setEditing}
                       onSave={(next) => { setMembers((ms) => ms.map((x) => (x.key === next.key ? next : x))); setEditing(null); }}
                       onRemove={i === 0 ? undefined : () => { setMembers((ms) => ms.filter((x) => x.key !== m.key)); setEditing(null); }}
@@ -472,6 +603,7 @@ export default function KioskApp() {
                         <b style={{ fontSize: 16 }}>{m.name || "—"}</b>
                         <div className="muted">{m.age} · {i === 0 ? t("you") : t(`rel_${m.relation}` as DictKey)}</div>
                       </div>
+                      {faceConsent && m.face && <span className="chip good"><Icon name="face" size="sm" /> {t("faceSaved")}</span>}
                       {m.wheelchair && <span className="chip warn"><Icon name="accessible" size="sm" /> {t("needsWheelchair")}</span>}
                       <span className={`chip ${needsBand(Number(m.age) || 0, i === 0) ? "good" : ""}`}><Icon name={needsBand(Number(m.age) || 0, i === 0) ? "watch" : "remove"} size="sm" /> {needsBand(Number(m.age) || 0, i === 0) ? t("bandYes") : t("bandNo")}</span>
                       <button className="icon-btn" onClick={() => setEditing(m)} aria-label={`${t("editMember")} ${m.name}`} disabled={Boolean(editing)}><Icon name="edit" /></button>
@@ -498,6 +630,17 @@ export default function KioskApp() {
               </div>
             )}
 
+            {screen === "findView" && pass?.diversion && (
+              pass.diversion.confirmed ? (
+                <div className="banner good" role="status"><Icon name="check_circle" /> {divSeen ? t("divertedThanks") : `${t("divertedTitle")} · ${pass.diversion.fromGhat} → ${lang === "hi" ? pass.ghat.nameHi : pass.ghat.name}`}</div>
+              ) : (
+                <div className="banner warn" role="alert" style={{ alignItems: "center" }}>
+                  <Icon name="alt_route" />
+                  <span style={{ flex: 1 }}><b>{t("divertedTitle")}</b><br />{t("divertedBody", { from: pass.diversion.fromGhat, to: lang === "hi" ? pass.ghat.nameHi : pass.ghat.name, time: `${pass.slot.start}–${pass.slot.end}` })}</span>
+                  <button className="btn btn-filled" disabled={busy} onClick={confirmDiversion}><Icon name="done_all" /> {t("divertedSeen")}</button>
+                </div>
+              )
+            )}
             {(screen === "pass" || screen === "changeDone" || screen === "findView") && pass && (
               <PassView pass={pass} qr={qr} t={t} lang={lang} today={config?.today ?? ""} />
             )}
@@ -550,20 +693,56 @@ export default function KioskApp() {
           <footer className="k-footer">
             {screen === "welcome" && (
               <>
-                <button className="btn btn-tonal" onClick={() => { setFlow("find"); go("phone"); }}><Icon name="person_search" /> {t("findMe")}</button>
+                <button className="btn btn-tonal" onClick={() => { setFlow("find"); go("findHow"); }}><Icon name="person_search" /> {t("findMe")}</button>
                 <button className="btn btn-filled" onClick={() => { setFlow("register"); go("consent"); }} lang={lang}><Icon name="arrow_forward" /> {t("continueIn", { lang: langInfo.native })}</button>
               </>
             )}
             {screen === "consent" && (
               <>
                 <button className="btn btn-tonal" onClick={() => go("welcome")}><Icon name="arrow_back" /> {t("back")}</button>
-                <button className="btn btn-filled" onClick={() => go("phone")}><Icon name="check" /> {t("consentAgree")}</button>
+                <button className="btn btn-filled" onClick={() => go("identify")}><Icon name="check" /> {t("consentAgree")}</button>
               </>
             )}
             {screen === "phone" && (
               <>
-                <button className="btn btn-tonal" onClick={() => go(flow === "find" ? "welcome" : "consent")}><Icon name="arrow_back" /> {t("back")}</button>
+                <button className="btn btn-tonal" onClick={() => go(flow === "find" ? "findHow" : "identify")}><Icon name="arrow_back" /> {t("back")}</button>
                 <button className="btn btn-filled" onClick={sendOtp} disabled={phone.length !== 10 || busy}><Icon name="sms" /> {t("sendCode")}</button>
+              </>
+            )}
+            {screen === "identify" && (
+              <>
+                <button className="btn btn-tonal" onClick={() => go("consent")}><Icon name="arrow_back" /> {t("back")}</button>
+                <span />
+              </>
+            )}
+            {screen === "aadhaar" && (
+              <>
+                <button className="btn btn-tonal" onClick={() => go("identify")}><Icon name="arrow_back" /> {t("back")}</button>
+                <button className="btn btn-text" onClick={() => go("phone")}><Icon name="smartphone" /> {t("idPhone")}</button>
+              </>
+            )}
+            {screen === "aadhaarPhone" && (
+              <>
+                <button className="btn btn-tonal" onClick={() => go("aadhaar")}><Icon name="arrow_back" /> {t("back")}</button>
+                <button className="btn btn-filled" onClick={attachAadhaarPhone} disabled={phone.length !== 10 || busy}><Icon name="arrow_forward" /> {t("next")}</button>
+              </>
+            )}
+            {screen === "findHow" && (
+              <>
+                <button className="btn btn-tonal" onClick={() => go("welcome")}><Icon name="arrow_back" /> {t("back")}</button>
+                <span />
+              </>
+            )}
+            {screen === "findPass" && (
+              <>
+                <button className="btn btn-tonal" onClick={() => go("findHow")}><Icon name="arrow_back" /> {t("back")}</button>
+                <button className="btn btn-filled" onClick={findByPass} disabled={last4.length !== 4 || findPassCode.trim().length < 5 || busy}><Icon name="search" /> {t("next")}</button>
+              </>
+            )}
+            {screen === "findFace" && (
+              <>
+                <button className="btn btn-tonal" onClick={() => go("findHow")}><Icon name="arrow_back" /> {t("back")}</button>
+                <button className="btn btn-filled" onClick={findByFace} disabled={last4.length !== 4 || !faceTpl || busy}><Icon name="search" /> {t("next")}</button>
               </>
             )}
             {screen === "otp" && (
@@ -786,8 +965,8 @@ function PassView({ pass, qr, t, lang, today }: { pass: Pass; qr: string; t: (k:
   );
 }
 
-function MemberForm({ m, leader, t, lang, voice, photoAllowed, onChange, onSave, onRemove, onError }: {
-  m: MemberDraft; leader: boolean; t: (k: DictKey, v?: Record<string, string | number>) => string; lang: LangCode; voice: boolean; photoAllowed: boolean;
+function MemberForm({ m, leader, t, lang, voice, photoAllowed, faceAllowed, onChange, onSave, onRemove, onError }: {
+  m: MemberDraft; leader: boolean; t: (k: DictKey, v?: Record<string, string | number>) => string; lang: LangCode; voice: boolean; photoAllowed: boolean; faceAllowed: boolean;
   onChange: (m: MemberDraft) => void; onSave: (m: MemberDraft) => void; onRemove?: () => void; onError: (s: string) => void;
 }) {
   const [touched, setTouched] = useState(false);
@@ -823,10 +1002,24 @@ function MemberForm({ m, leader, t, lang, voice, photoAllowed, onChange, onSave,
         <input type="checkbox" checked={m.wheelchair} onChange={(e) => onChange({ ...m, wheelchair: e.target.checked })} />
         <span><Icon name="accessible" size="sm" /> {t("needsWheelchair")}</span>
       </label>
-      {photoAllowed && isChild && <CameraCapture t={t} existing={m.photo} onPhoto={(p) => onChange({ ...m, photo: p ?? undefined })} />}
+      {((photoAllowed && isChild) || faceAllowed) && (
+        <div style={{ display: "grid", gap: 6 }}>
+          {faceAllowed && !(photoAllowed && isChild) && <span className="muted" style={{ fontSize: 13 }}>{t("photoForFace")}</span>}
+          <CameraCapture t={t} existing={m.photo} onPhoto={(p) => {
+            if (!p) { onChange({ ...m, photo: undefined, face: undefined, faceState: undefined }); return; }
+            if (!faceAllowed) { onChange({ ...m, photo: p }); return; }
+            const next = { ...m, photo: p, face: undefined, faceState: "working" as const };
+            onChange(next);
+            void templateFromPhoto(p).then((face) => onChange({ ...next, face: face ?? undefined, faceState: face ? "ok" : "bad" }));
+          }} />
+          {m.faceState === "working" && <span className="chip" role="status"><Icon name="hourglass_top" size="sm" /> {t("faceWorking")}</span>}
+          {m.faceState === "ok" && <span className="chip good" role="status"><Icon name="face" size="sm" /> {t("faceSaved")}</span>}
+          {m.faceState === "bad" && <span className="chip warn" role="alert"><Icon name="warning" size="sm" /> {t("faceRetake")}</span>}
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
         {onRemove && <button className="btn small btn-text" onClick={onRemove}><Icon name="delete" /> {t("removeMember")}</button>}
-        <button className="btn small btn-filled" onClick={() => { setTouched(true); if (nameOk && ageOk) onSave({ ...m, name: m.name.trim(), photo: isChild ? m.photo : undefined }); }}>
+        <button className="btn small btn-filled" onClick={() => { setTouched(true); if (nameOk && ageOk && m.faceState !== "working") onSave({ ...m, name: m.name.trim(), photo: (photoAllowed && isChild) || faceAllowed ? m.photo : undefined }); }}>
           <Icon name="check" /> {t("saveMember")}
         </button>
       </div>

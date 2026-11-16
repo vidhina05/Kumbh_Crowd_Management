@@ -22,11 +22,14 @@ export const memberInput = z.object({
   relation: z.enum(RELATIONS),
   needs: z.array(z.enum(NEEDS)).max(6).default([]),
   photo: photoDataUrl.optional(),
+  // Opt-in face template (1024 float32, base64) computed on the kiosk. Needs consent.face.
+  face: z.string().min(100).max(8000).optional(),
+  gender: z.enum(["M", "F", "T"]).optional(),
 });
 
 export const registrationInput = z.object({
   language: z.enum(LANG_CODES),
-  consent: z.object({ version: z.literal("2026-01"), accepted: z.literal(true), photo: z.boolean() }),
+  consent: z.object({ version: z.literal("2026-01"), accepted: z.literal(true), photo: z.boolean(), face: z.boolean().default(false) }),
   homeTown: z.string().trim().max(80).default(""),
   slotId: z.string().uuid(),
   members: z.array(memberInput).min(1, "Add at least one person").max(12, "Up to 12 people per registration"),

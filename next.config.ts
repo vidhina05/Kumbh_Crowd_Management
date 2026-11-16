@@ -1,25 +1,10 @@
 import type { NextConfig } from "next";
 
-const isDev = process.env.NODE_ENV !== "production";
-
-// Content Security Policy. Everything is served from our own origin:
-// fonts are bundled from @fontsource, AI and speech calls go through our own API routes.
-const csp = [
-  "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
-  "media-src 'self' data: blob:",
-  "font-src 'self' data:",
-  "connect-src 'self'",
-  "frame-ancestors 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "object-src 'none'",
-].join("; ");
+// The page Content Security Policy (with a per-request nonce) is set in src/proxy.ts.
+// API responses are JSON and get this strict one.
+const apiCsp = "default-src 'none'; frame-ancestors 'none'";
 
 const securityHeaders = [
-  { key: "Content-Security-Policy", value: csp },
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },
@@ -29,14 +14,28 @@ const securityHeaders = [
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
 ];
 
-const nextConfig: NextConfig = {
+const pages = process.env.PAGES_BUILD === "1";
+
+const nextConfig: NextConfig = pages
+  ? {
+      // GitHub Pages: static UI + the in-browser backend (scripts/build-pages.mjs). No server, no headers.
+      output: "export",
+      basePath: process.env.NEXT_PUBLIC_BASE_PATH || undefined,
+      trailingSlash: true,
+      images: { unoptimized: true },
+      reactStrictMode: true,
+      // The API folder is moved aside for this build (route handlers can't be exported), so Next's own type
+      // check would fail on files that import it. `npm run typecheck` runs separately, before this build, in CI.
+      typescript: { ignoreBuildErrors: true },
+    }
+  : {
   poweredByHeader: false,
   reactStrictMode: true,
   serverExternalPackages: ["@electric-sql/pglite"],
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },
-      { source: "/api/:path*", headers: [{ key: "Cache-Control", value: "no-store" }] },
+      { source: "/api/:path*", headers: [{ key: "Cache-Control", value: "no-store" }, { key: "Content-Security-Policy", value: apiCsp }] },
     ];
   },
 };

@@ -10,7 +10,7 @@ const input = z.object({ audio: z.string().max(1_000_000).regex(/^[A-Za-z0-9+/=]
 
 export const POST = handler(async (req: Request) => {
   const kiosk = await requireKiosk(req);
-  rateLimit(`asr:${kiosk.id}`, 30, 60_000);
+  await rateLimit(`asr:${kiosk.id}`, 30, 60_000);
   const { audio, lang } = await parseBody(req, input);
   return json({ text: await speechToText(audio, lang) });
 });

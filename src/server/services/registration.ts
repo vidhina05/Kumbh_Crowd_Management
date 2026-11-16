@@ -6,6 +6,7 @@ import { HttpError, badRequest, conflict, notFound } from "../http";
 import { env } from "../env";
 import { audit } from "../audit";
 import { phoneForChallenge } from "./otp";
+import { encryptTemplate } from "./faces";
 import type { RegistrationInput } from "@/shared/validation";
 import { addDays, crowdLevel, istDate, istInstant, minutesAgo } from "@/shared/time";
 
@@ -62,9 +63,9 @@ function photoBytes(dataUrl: string): Buffer {
   return b;
 }
 
-export async function createRegistration(input: RegistrationInput, kioskId: string, challengeId: string) {
+export async function createRegistration(input: RegistrationInput, kioskId: string, claims: { c: string; ar?: string; a4?: string }) {
   const db = await getDb();
-  const phone = await phoneForChallenge(challengeId);
+  const phone = await phoneForChallenge(claims.c);
 
   // One active registration per phone: offer "Find my registration" instead of a duplicate.
   const today = istDate();
@@ -76,6 +77,8 @@ export async function createRegistration(input: RegistrationInput, kioskId: stri
   if (existing.length) throw conflict("This phone number already has a registration.", { reason: "already_registered" });
 
   if (!input.consent.photo && input.members.some((m) => m.photo)) throw badRequest("Photos need photo consent.");
+  if (!input.consent.face && input.members.some((m) => m.face)) throw badRequest("Face matching needs consent.");
+  const faces = input.members.map((m) => (input.consent.face && m.face ? encryptTemplate(m.face) : null));
   const photos = input.members.map((m) => (input.consent.photo && m.photo ? photoBytes(m.photo) : null));
 
   const people = input.members.length;
@@ -108,6 +111,11 @@ export async function createRegistration(input: RegistrationInput, kioskId: stri
         consentVersion: CONSENT_VERSION,
         consentAt: new Date(),
         photoConsent: input.consent.photo,
+        faceConsent: input.consent.face,
+        idMethod: claims.ar ? "aadhaar" : "phone",
+        phoneVerified: !claims.ar,
+        aadhaarRefHash: claims.ar ?? null,
+        aadhaarLast4: claims.a4 ?? null,
         deleteAfter,
       })
       .returning();
@@ -123,6 +131,8 @@ export async function createRegistration(input: RegistrationInput, kioskId: stri
         isLeader,
         bandId: needsBand({ age: m.age, isLeader }) ? bandId() : null,
         photoEnc: photos[i] ? encrypt(photos[i]!) : null,
+        faceTemplateEnc: faces[i],
+        gender: m.gender ?? null,
         sortOrder: i,
       };
     });
@@ -136,7 +146,7 @@ export async function createRegistration(input: RegistrationInput, kioskId: stri
     action: "registration.create",
     entityType: "family",
     entityId: result.family.id,
-    details: { people, bands: result.members.filter((m) => m.bandId).length, photos: result.members.filter((m) => m.photoEnc).length, language: input.language },
+    details: { people, bands: result.members.filter((m) => m.bandId).length, photos: result.members.filter((m) => m.photoEnc).length, faces: faces.filter(Boolean).length, idMethod: claims.ar ? "aadhaar" : "phone", language: input.language },
   });
   return passView(result.family, result.slot, result.ghat, result.members);
 }
@@ -148,6 +158,9 @@ type MemberRow = typeof schema.members.$inferSelect;
 
 export function passView(f: FamilyRow, s: SlotRow, g: GhatRow, ms: MemberRow[]) {
   return {
+    familyId: f.id,
+    idMethod: f.idMethod,
+    aadhaarLast4: f.aadhaarLast4,
     passCode: f.passCode,
     leaderName: f.leaderName,
     phoneLast4: f.phoneLast4,
@@ -228,4 +241,35 @@ export async function membersOf(familyIds: string[]) {
   if (!familyIds.length) return [];
   const db = await getDb();
   return db.select().from(schema.members).where(inArray(schema.members.familyId, familyIds));
+}
+
+/** Was this family moved by a diversion that they haven't acknowledged yet? */
+export async function pendingDiversion(familyId: string) {
+  const db = await getDb();
+  const rows = await db
+    .select({ code: schema.diversions.code, fromGhat: schema.diversions.fromGhatId, confirmedAt: schema.diversionMoves.confirmedAt, status: schema.diversions.status })
+    .from(schema.diversionMoves)
+    .innerJoin(schema.diversions, eq(schema.diversionMoves.diversionId, schema.diversions.id))
+    .where(eq(schema.diversionMoves.familyId, familyId))
+    .orderBy(desc(schema.diversions.createdAt))
+    .limit(1);
+  const r = rows[0];
+  if (!r || r.status !== "sent") return null;
+  const [g] = await db.select({ name: schema.ghats.name }).from(schema.ghats).where(eq(schema.ghats.id, r.fromGhat));
+  return { code: r.code, fromGhat: g?.name ?? r.fromGhat, confirmed: Boolean(r.confirmedAt) };
+}
+
+/** Pass lookup by pass number + last 4 phone digits (pass QR at the kiosk, or the pilgrim's own phone). */
+export async function findByPass(passCode: string, last4: string) {
+  const db = await getDb();
+  const rows = await db
+    .select({ f: schema.families, s: schema.slots, g: schema.ghats })
+    .from(schema.families)
+    .innerJoin(schema.slots, eq(schema.families.slotId, schema.slots.id))
+    .innerJoin(schema.ghats, eq(schema.slots.ghatId, schema.ghats.id))
+    .where(eq(schema.families.passCode, passCode.trim().toUpperCase()));
+  const row = rows[0];
+  if (!row || row.f.phoneLast4 !== last4) throw notFound("We couldn't find that pass. Check the pass number and the last 4 digits of the phone.");
+  const ms = await db.select().from(schema.members).where(eq(schema.members.familyId, row.f.id));
+  return { pass: passView(row.f, row.s, row.g, ms), phoneHash: row.f.phoneHash, diversion: await pendingDiversion(row.f.id) };
 }
