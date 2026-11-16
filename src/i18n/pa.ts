@@ -236,4 +236,5 @@ export const pa: Dict = {
   member_child: "ਬੱਚਾ",
   mute: "ਆਵਾਜ਼ ਬੰਦ ਕਰੋ",
   unmute: "ਆਵਾਜ਼ ਚਾਲੂ ਕਰੋ",
+  aadhaarUnchecked: "ਅਸਲ ਕਾਰਡ · ਇਸ ਡੈਮੋ ਵਿੱਚ UIDAI ਦਸਤਖ਼ਤ ਨਹੀਂ ਜਾਂਚੇ",
 };

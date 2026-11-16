@@ -236,4 +236,5 @@ export const mr: Dict = {
   member_child: "मूल",
   mute: "आवाज बंद करा",
   unmute: "आवाज सुरू करा",
+  aadhaarUnchecked: "खरे कार्ड · या डेमोमध्ये UIDAI स्वाक्षरी तपासली नाही",
 };

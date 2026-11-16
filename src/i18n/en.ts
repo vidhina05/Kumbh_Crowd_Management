@@ -251,6 +251,7 @@ export const en = {
   member_child: "Child",
   mute: "Turn voice off",
   unmute: "Turn voice on",
+  aadhaarUnchecked: "Real card · UIDAI signature not checked in this demo",
 };
 
 export type Dict = typeof en;

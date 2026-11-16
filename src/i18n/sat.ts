@@ -239,4 +239,5 @@ export const sat: Dict = {
   member_child: "ᱜᱤᱫᱽᱨᱤ",
   mute: "ᱥᱟᱰᱮ ᱵᱚᱸᱫᱚ ᱢᱮ",
   unmute: "ᱥᱟᱰᱮ ᱪᱟᱹᱞᱩ ᱢᱮ",
+  aadhaarUnchecked: "ᱥᱟᱹᱨᱤ ᱠᱟᱨᱰ · ᱱᱚᱶᱟ ᱰᱮᱢᱚ ᱨᱮ UIDAI ᱥᱟᱭᱤᱱ ᱵᱟᱝ ᱧᱮᱞ ᱟᱠᱟᱱᱟ",
 };

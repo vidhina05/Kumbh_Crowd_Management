@@ -236,4 +236,5 @@ export const kok: Dict = {
   member_child: "भुरगें",
   mute: "आवाज बंद करात",
   unmute: "आवाज सुरू करात",
+  aadhaarUnchecked: "खरें कार्ड · ह्या डेमोंत UIDAI सही तपासूंक ना",
 };

@@ -236,4 +236,5 @@ export const brx: Dict = {
   member_child: "गथ'",
   mute: "गाब बन्द खालाम",
   unmute: "गाब खेव",
+  aadhaarUnchecked: "थार कार्ड · बे डेमोआव UIDAI सहि नायफिनाखै",
 };

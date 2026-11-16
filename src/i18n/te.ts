@@ -236,4 +236,5 @@ export const te: Dict = {
   member_child: "పిల్లవాడు",
   mute: "వాయిస్ ఆపు",
   unmute: "వాయిస్ ఆన్ చేయి",
+  aadhaarUnchecked: "నిజమైన కార్డు · ఈ డెమోలో UIDAI సంతకం తనిఖీ చేయలేదు",
 };

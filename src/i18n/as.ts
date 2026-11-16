@@ -236,4 +236,5 @@ export const as: Dict = {
   member_child: "শিশু",
   mute: "মাত বন্ধ কৰক",
   unmute: "মাত চলাওক",
+  aadhaarUnchecked: "প্ৰকৃত কাৰ্ড · এই ডেমোত UIDAI চহী পৰীক্ষা কৰা হোৱা নাই",
 };

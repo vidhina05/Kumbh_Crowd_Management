@@ -248,4 +248,5 @@ export const hi: Dict = {
   member_child: "बच्चा",
   mute: "आवाज़ बंद करें",
   unmute: "आवाज़ चालू करें",
+  aadhaarUnchecked: "असली कार्ड · इस डेमो में UIDAI हस्ताक्षर नहीं जाँचा गया",
 };

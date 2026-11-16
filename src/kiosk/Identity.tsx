@@ -6,7 +6,7 @@ import type { T } from "@/i18n";
 import { QrScanner, readQrFromImage } from "@/shared/client/QrScanner";
 import { faceTemplate, faceEngine } from "@/shared/client/face";
 
-export type AadhaarResult = { aadhaarToken: string; verifiedBy: "uidai" | "test"; person: { name: string; age: number | null; gender: "M" | "F" | "T" | null; last4: string; state: string | null } };
+export type AadhaarResult = { aadhaarToken: string; verifiedBy: "uidai" | "test" | "unchecked"; person: { name: string; age: number | null; gender: "M" | "F" | "T" | null; last4: string; state: string | null } };
 
 /** Aadhaar Secure QR: camera scan, a photo of the QR, or (demo/staging only) a signed test card. The server checks the signature. */
 export function AadhaarScan({ t, testCards, onVerified, onError }: { t: T; testCards: boolean; onVerified: (r: AadhaarResult) => void; onError: (msg: string) => void }) {

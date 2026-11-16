@@ -56,9 +56,13 @@ export async function verifyAadhaarQr(qrText: string, kioskId: string) {
     if (e instanceof AadhaarQrError) throw new HttpError(400, `aadhaar_${e.code}`, e.message);
     throw e;
   }
-  let verifiedBy: "uidai" | "test" | null = null;
+  let verifiedBy: "uidai" | "test" | "unchecked" | null = null;
   if (k.uidai && (await verifyAadhaarSignature(qr, k.uidai))) verifiedBy = "uidai";
   else if (k.test && (await verifyAadhaarSignature(qr, k.test.publicKey))) verifiedBy = "test";
+  // In-browser demo only (no UIDAI certificate can be bundled there): a real card that decodes correctly is accepted
+  // and clearly labelled "signature not checked". A real deployment never takes this branch: DEMO_MODE can't be set
+  // on a server (env.ts refuses to start), so without AADHAAR_UIDAI_CERT_PEM real cards are refused.
+  else if (!k.uidai && env().DEMO_MODE === "true") verifiedBy = "unchecked";
   if (!verifiedBy) {
     await audit({ actorType: "kiosk", actorId: kioskId, action: "aadhaar.signature_failed" });
     throw new HttpError(400, "aadhaar_signature", "This card's QR code could not be verified. Please use your phone number, or ask a volunteer.");

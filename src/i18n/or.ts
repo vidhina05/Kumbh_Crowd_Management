@@ -236,4 +236,5 @@ export const or: Dict = {
   member_child: "ପିଲା",
   mute: "ସ୍ୱର ବନ୍ଦ କରନ୍ତୁ",
   unmute: "ସ୍ୱର ଚାଲୁ କରନ୍ତୁ",
+  aadhaarUnchecked: "ପ୍ରକୃତ କାର୍ଡ · ଏହି ଡେମୋରେ UIDAI ସ୍ୱାକ୍ଷର ଯାଞ୍ଚ ହୋଇନାହିଁ",
 };

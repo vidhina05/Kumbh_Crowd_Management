@@ -236,4 +236,5 @@ export const sa: Dict = {
   member_child: "बालः",
   mute: "ध्वनिं स्थगयतु",
   unmute: "ध्वनिं चालयतु",
+  aadhaarUnchecked: "वास्तविकं पत्रम् · अस्मिन् प्रदर्शने UIDAI हस्ताक्षरं न परीक्षितम्",
 };

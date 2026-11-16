@@ -236,4 +236,5 @@ export const bn: Dict = {
   member_child: "শিশু",
   mute: "কণ্ঠ বন্ধ করুন",
   unmute: "কণ্ঠ চালু করুন",
+  aadhaarUnchecked: "আসল কার্ড · এই ডেমোতে UIDAI স্বাক্ষর যাচাই হয়নি",
 };

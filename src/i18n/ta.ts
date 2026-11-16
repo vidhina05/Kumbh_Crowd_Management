@@ -236,4 +236,5 @@ export const ta: Dict = {
   member_child: "குழந்தை",
   mute: "குரலை அணை",
   unmute: "குரலை இயக்கு",
+  aadhaarUnchecked: "உண்மை அட்டை · இந்த டெமோவில் UIDAI கையொப்பம் சரிபார்க்கப்படவில்லை",
 };

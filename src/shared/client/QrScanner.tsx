@@ -15,6 +15,7 @@ export function QrScanner({ onResult, label, onError }: { onResult: (text: strin
     let stream: MediaStream | null = null;
     let raf = 0;
     let stopped = false;
+    let frameNo = 0;
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
     type BD = { detect: (s: CanvasImageSource) => Promise<{ rawValue: string }[]> };
@@ -30,12 +31,17 @@ export function QrScanner({ onResult, label, onError }: { onResult: (text: strin
           try { text = (await detector.detect(v))[0]?.rawValue ?? null; } catch { /* fall back below */ }
         }
         if (!text) {
-          const w = Math.min(960, v.videoWidth);
-          canvas.width = w;
-          canvas.height = Math.round((v.videoHeight / v.videoWidth) * w);
-          ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
-          const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          text = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" })?.data ?? null;
+          // Aadhaar Secure QR is very dense: read the centre square at full camera resolution (no downscaling),
+          // alternating with the whole frame, and try both light-on-dark and dark-on-light.
+          frameNo++;
+          const vw = v.videoWidth, vh = v.videoHeight;
+          const side = Math.min(vw, vh);
+          const crop = frameNo % 2 === 0;
+          const sx = crop ? (vw - side) / 2 : 0, sy = crop ? (vh - side) / 2 : 0, sw = crop ? side : vw, sh = crop ? side : vh;
+          canvas.width = sw; canvas.height = sh;
+          ctx.drawImage(v, sx, sy, sw, sh, 0, 0, sw, sh);
+          const img = ctx.getImageData(0, 0, sw, sh);
+          text = jsQR(img.data, img.width, img.height, { inversionAttempts: frameNo % 4 < 2 ? "dontInvert" : "attemptBoth" })?.data ?? null;
         }
         if (text && !done.current) {
           done.current = true;
@@ -48,7 +54,7 @@ export function QrScanner({ onResult, label, onError }: { onResult: (text: strin
 
     (async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
         if (stopped) return stream.getTracks().forEach((t) => t.stop());
         const v = video.current!;
         v.srcObject = stream;
@@ -87,5 +93,5 @@ export async function readQrFromImage(src: string): Promise<string | null> {
   const ctx = c.getContext("2d")!;
   ctx.drawImage(img, 0, 0);
   const d = ctx.getImageData(0, 0, c.width, c.height);
-  return jsQR(d.data, d.width, d.height)?.data ?? null;
+  return jsQR(d.data, d.width, d.height, { inversionAttempts: "attemptBoth" })?.data ?? null;
 }

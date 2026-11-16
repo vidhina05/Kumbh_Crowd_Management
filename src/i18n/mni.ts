@@ -239,4 +239,5 @@ export const mni: Dict = {
   member_child: "ꯑꯉꯥꯡ",
   mute: "ꯈꯣꯟꯖꯦꯜ ꯊꯤꯡꯕꯤꯌꯨ",
   unmute: "ꯈꯣꯟꯖꯦꯜ ꯍꯥꯡꯗꯣꯛꯄꯤꯌꯨ",
+  aadhaarUnchecked: "ꯑꯁꯦꯡꯕ ꯀꯥꯔꯗ · ꯗꯦꯃꯣ ꯑꯁꯤꯗ UIDAI ꯁꯥꯏꯟ ꯌꯦꯡꯗꯦ",
 };

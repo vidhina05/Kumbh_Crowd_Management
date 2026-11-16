@@ -236,4 +236,5 @@ export const mai: Dict = {
   member_child: "बच्चा",
   mute: "आवाज बंद करू",
   unmute: "आवाज चालू करू",
+  aadhaarUnchecked: "असली कार्ड · एहि डेमोमे UIDAI हस्ताक्षर नहि जाँचल गेल",
 };

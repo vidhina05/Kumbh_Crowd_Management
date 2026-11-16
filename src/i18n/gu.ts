@@ -236,4 +236,5 @@ export const gu: Dict = {
   member_child: "બાળક",
   mute: "અવાજ બંધ કરો",
   unmute: "અવાજ ચાલુ કરો",
+  aadhaarUnchecked: "અસલ કાર્ડ · આ ડેમોમાં UIDAI સહી તપાસી નથી",
 };

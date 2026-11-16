@@ -236,4 +236,5 @@ export const kn: Dict = {
   member_child: "ಮಗು",
   mute: "ಧ್ವನಿ ನಿಲ್ಲಿಸಿ",
   unmute: "ಧ್ವನಿ ಆನ್ ಮಾಡಿ",
+  aadhaarUnchecked: "ನಿಜವಾದ ಕಾರ್ಡ್ · ಈ ಡೆಮೋದಲ್ಲಿ UIDAI ಸಹಿ ಪರಿಶೀಲಿಸಿಲ್ಲ",
 };

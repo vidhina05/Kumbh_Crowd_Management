@@ -630,7 +630,7 @@ export default function KioskApp() {
 
             {screen === "aadhaarPhone" && aadhaar && (
               <div style={{ display: "grid", gap: 16, maxWidth: 440 }}>
-                <div className="banner good" role="status"><Icon name="verified" /> {t("aadhaarOk", { name: aadhaar.person.name, age: aadhaar.person.age ?? "—" })} · ••••{aadhaar.person.last4}{aadhaar.verifiedBy === "test" ? ` · ${t("aadhaarTest")}` : ""}</div>
+                <div className="banner good" role="status"><Icon name="verified" /> {t("aadhaarOk", { name: aadhaar.person.name, age: aadhaar.person.age ?? "—" })} · ••••{aadhaar.person.last4}{aadhaar.verifiedBy === "test" ? ` · ${t("aadhaarTest")}` : aadhaar.verifiedBy === "unchecked" ? ` · ${t("aadhaarUnchecked")}` : ""}</div>
                 <div className="field">
                   <label htmlFor="aphone">{t("phoneLabel")}</label>
                   <input id="aphone" className="input mono" inputMode="numeric" autoComplete="off" value={phone} onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="98765 43210" />

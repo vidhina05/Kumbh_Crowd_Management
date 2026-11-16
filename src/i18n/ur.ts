@@ -236,4 +236,5 @@ export const ur: Dict = {
   member_child: "بچہ",
   mute: "آواز بند کریں",
   unmute: "آواز چالو کریں",
+  aadhaarUnchecked: "اصل کارڈ · اس ڈیمو میں UIDAI دستخط نہیں جانچا گیا",
 };

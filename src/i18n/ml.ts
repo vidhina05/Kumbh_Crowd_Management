@@ -236,4 +236,5 @@ export const ml: Dict = {
   member_child: "കുട്ടി",
   mute: "ശബ്ദം ഓഫ് ചെയ്യുക",
   unmute: "ശബ്ദം ഓൺ ചെയ്യുക",
+  aadhaarUnchecked: "യഥാർത്ഥ കാർഡ് · ഈ ഡെമോയിൽ UIDAI ഒപ്പ് പരിശോധിച്ചിട്ടില്ല",
 };

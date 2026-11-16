@@ -236,4 +236,5 @@ export const sd: Dict = {
   member_child: "ٻار",
   mute: "آواز بند ڪريو",
   unmute: "آواز چالو ڪريو",
+  aadhaarUnchecked: "اصل ڪارڊ · هن ڊيمو ۾ UIDAI صحيح نه جانچي وئي",
 };

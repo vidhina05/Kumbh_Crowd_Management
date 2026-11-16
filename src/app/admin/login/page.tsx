@@ -223,12 +223,24 @@ function FaceScan({ who, onDone, onFallback }: { who: Start; onDone: (r: { mfaRe
         if (stop) return s.getTracks().forEach((x) => x.stop());
         stream = s; video.current!.srcObject = s; await video.current!.play();
         setState("looking"); setMsg(`Matching · ${who.staffCode}`);
+        const good: { template: string; score: number; real: number; live: number }[] = [];
+        let started = Date.now();
         const tick = async () => {
           if (stop || busy.current) return;
           const v = video.current;
           if (v && v.videoWidth) {
             const f = await faceTemplate(v);
-            if (f.ok && f.score > 0.7) {
+            // Don't spend a try on a blurry or half-turned frame: gather a few clear frames over ~2 s and send the
+            // one the anti-spoofing/liveness models trust most. If none look live, coach instead of failing.
+            if (f.ok && f.score > 0.6) good.push(f);
+            else if (!f.ok && good.length === 0) setMsg(f.message);
+            const ready = good.length >= 4 || (good.length > 0 && Date.now() - started > 6000);
+            if (!ready) { timer = window.setTimeout(() => void tick(), 350); return; }
+            const best = good.sort((x, y) => y.real * y.live - x.real * x.live)[0];
+            good.length = 0; started = Date.now();
+            if (best.real < 0.4 || best.live < 0.4) { setMsg("Hold still and look straight at the camera, in front of a light."); timer = window.setTimeout(() => void tick(), 350); return; }
+            {
+              const f = best;
               busy.current = true; setState("matching");
               try {
                 const r = await api<{ mfaRequired?: boolean; mfaToken?: string }>("/api/admin/auth/face", { body: { loginToken: who.loginToken, template: f.template, real: f.real, live: f.live } });

@@ -236,4 +236,5 @@ export const ne: Dict = {
   member_child: "बच्चा",
   mute: "आवाज बन्द गर्नुहोस्",
   unmute: "आवाज खोल्नुहोस्",
+  aadhaarUnchecked: "वास्तविक कार्ड · यस डेमोमा UIDAI हस्ताक्षर जाँचिएको छैन",
 };

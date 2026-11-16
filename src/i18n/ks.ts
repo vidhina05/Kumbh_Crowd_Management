@@ -236,4 +236,5 @@ export const ks: Dict = {
   member_child: "شُر",
   mute: "آواز بند کٔرِو",
   unmute: "آواز چالو کٔرِو",
+  aadhaarUnchecked: "اصل کارڈ · یتھ ڈیمو منٛز آو نہٕ UIDAI دستخط پرکھنہٕ",
 };

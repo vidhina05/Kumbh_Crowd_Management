@@ -236,4 +236,5 @@ export const bho: Dict = {
   member_child: "लइका",
   mute: "आवाज बंद करीं",
   unmute: "आवाज चालू करीं",
+  aadhaarUnchecked: "असली कार्ड · एह डेमो में UIDAI हस्ताक्षर ना जाँचल गइल",
 };

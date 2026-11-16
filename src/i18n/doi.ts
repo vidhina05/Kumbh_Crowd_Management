@@ -236,4 +236,5 @@ export const doi: Dict = {
   member_child: "बच्चा",
   mute: "अवाज़ बंद करो",
   unmute: "अवाज़ चालू करो",
+  aadhaarUnchecked: "असली कार्ड · इस डेमो च UIDAI दस्तखत नेईं परखे",
 };
