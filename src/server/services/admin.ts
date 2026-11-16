@@ -1,5 +1,5 @@
 import "server-only";
-import { asc, desc, eq, lt, and, inArray, isNotNull, sql } from "drizzle-orm";
+import { asc, desc, eq, lt, lte, and, inArray, isNotNull, sql } from "drizzle-orm";
 import { getDb, schema } from "../db";
 import { randomToken, sha256 } from "../crypto";
 import { HttpError, badRequest, conflict, notFound } from "../http";
@@ -34,15 +34,18 @@ export async function listAlerts(status?: "active" | "resolved") {
     .then((rows) => rows.map((r) => ({ ...r.a, createdByName: r.by })));
 }
 
-export async function createAlert(user: AdminUser, input: { severity: string; title: string; message: string; ghatId?: string | null; audience: string }) {
+export async function createAlert(user: AdminUser, input: { severity: string; title: string; message: string; ghatId?: string | null; audience: string; translations?: Record<string, { title: string; message: string }>; startsAt?: string | null; ghatIds?: string[] }) {
   const db = await getDb();
-  if (input.ghatId) {
-    const [g] = await db.select({ id: schema.ghats.id }).from(schema.ghats).where(eq(schema.ghats.id, input.ghatId));
-    if (!g) throw badRequest("Unknown ghat.");
+  const ids = [...new Set([...(input.ghatIds ?? []), ...(input.ghatId ? [input.ghatId] : [])])];
+  if (ids.length) {
+    const found = await db.select({ id: schema.ghats.id }).from(schema.ghats);
+    if (ids.some((i) => !found.some((f) => f.id === i))) throw badRequest("Unknown ghat.");
   }
+  const startsAt = input.startsAt ? new Date(input.startsAt) : new Date();
+  if (Number.isNaN(startsAt.getTime()) || startsAt.getTime() > Date.now() + 2 * 86_400_000) throw badRequest("Choose a time within the next two days.");
   const [row] = await db
     .insert(schema.alerts)
-    .values({ severity: input.severity, title: input.title, message: input.message, ghatId: input.ghatId ?? null, audience: input.audience, createdBy: user.id })
+    .values({ severity: input.severity, title: input.title, message: input.message, ghatId: ids.length === 1 ? ids[0] : null, ghatIds: ids, audience: input.audience, translations: input.translations ?? {}, startsAt, createdBy: user.id })
     .returning();
   await audit({ actorType: "admin", actorId: user.id, action: "alert.create", entityType: "alert", entityId: row.id, details: { severity: input.severity, audience: input.audience } });
   return row;
@@ -64,9 +67,9 @@ export async function resolveAlert(user: AdminUser, id: string) {
 export async function kioskAlerts() {
   const db = await getDb();
   const rows = await db
-    .select({ id: schema.alerts.id, severity: schema.alerts.severity, title: schema.alerts.title, message: schema.alerts.message, ghatId: schema.alerts.ghatId, audience: schema.alerts.audience })
+    .select({ id: schema.alerts.id, severity: schema.alerts.severity, title: schema.alerts.title, message: schema.alerts.message, ghatId: schema.alerts.ghatId, audience: schema.alerts.audience, translations: schema.alerts.translations })
     .from(schema.alerts)
-    .where(eq(schema.alerts.status, "active"))
+    .where(and(eq(schema.alerts.status, "active"), lte(schema.alerts.startsAt, new Date())))
     .orderBy(desc(schema.alerts.createdAt));
   return rows.filter((a) => a.audience !== "staff").map(({ audience: _a, ...rest }) => rest);
 }

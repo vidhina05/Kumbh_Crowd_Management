@@ -5,6 +5,7 @@ import { Suspense, createContext, useContext, useEffect, useRef, useState } from
 import "./admin.css";
 import { api, usePoll } from "./client";
 import { AdminI18n, useAdminT, type AdminKey } from "./i18n";
+import { SettingsSheet, useLiveSounds, usePrefs } from "./Prefs";
 import type { Live } from "./types";
 import { can, ROLE_LABELS, type Permission, type Role } from "@/shared/rbac";
 
@@ -54,6 +55,8 @@ function ShellInner({ me, integrations, children }: { me: Me; integrations: Inte
   const [menu, setMenu] = useState(false);
   const [notes, setNotes] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [settings, setSettings] = useState(false);
+  const [prefs, setPrefs] = usePrefs();
   const live = usePoll<Live>(can(me.role, "map.view") ? "/api/admin/live" : null, 10_000);
   useEffect(() => setTheme((document.documentElement.dataset.theme as "light" | "dark") ?? "light"), []);
   const toggleTheme = () => {
@@ -66,6 +69,18 @@ function ShellInner({ me, integrations, children }: { me: Me; integrations: Inte
     await api("/api/admin/auth/logout", { body: {} }).catch(() => undefined);
     router.replace("/admin/login");
   };
+  useLiveSounds(live.data, prefs);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement;
+      if (e.metaKey || e.ctrlKey || e.altKey || el.closest("input, textarea, select, [contenteditable=true]")) return;
+      if (e.key === "/") { e.preventDefault(); setSearchOpen(true); }
+      else if (e.key === "n" || e.key === "N") setNotes((v) => !v);
+      else if ((e.key === "s" || e.key === "S") && can(me.role, "assistant.use")) setSahayak({ open: true });
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [me.role]);
   const value: ShellCtx = { me, integrations, can: (p) => can(me.role, p), live: live.data, liveUpdatedAt: live.updatedAt, reloadLive: live.reload, openSahayak: (q) => setSahayak({ open: true, q }) };
   const worst = live.data ? [...live.data.ghats].sort((a, b) => b.percent - a.percent)[0] : null;
   const critical = worst && worst.percent >= worst.safeLimitPct ? worst : null;
@@ -131,7 +146,8 @@ function ShellInner({ me, integrations, children }: { me: Me; integrations: Inte
           </header>
           <main className="a-content">{children}</main>
         </div>
-        {menu && <ProfileMenu me={me} onClose={() => setMenu(false)} onSignOut={signOut} />}
+        {menu && <ProfileMenu me={me} onClose={() => setMenu(false)} onSignOut={signOut} onSettings={() => { setMenu(false); setSettings(true); }} />}
+        {settings && <SettingsSheet name={me.name} prefs={prefs} set={setPrefs} onClose={() => setSettings(false)} />}
         {notes && <Notifications live={live.data} onClose={() => setNotes(false)} />}
         {searchOpen && <SearchSheet live={live.data} onClose={() => setSearchOpen(false)} />}
         {sahayak.open && <><div className="a-sheet-scrim" onClick={() => setSahayak({ open: false })} aria-hidden="true" /><Sahayak onClose={() => setSahayak({ open: false })} connected={integrations.assistant} initial={sahayak.q} /></>}
@@ -152,7 +168,7 @@ function useDismiss(onClose: () => void) {
   return ref;
 }
 
-function ProfileMenu({ me, onClose, onSignOut }: { me: Me; onClose: () => void; onSignOut: () => void }) {
+function ProfileMenu({ me, onClose, onSignOut, onSettings }: { me: Me; onClose: () => void; onSignOut: () => void; onSettings: () => void }) {
   const { t } = useAdminT();
   const ref = useDismiss(onClose);
   const item = (href: string, icon: string, label: string) => <Link role="menuitem" href={href} onClick={onClose}><span className="icon sm">{icon}</span>{label}</Link>;
@@ -161,7 +177,7 @@ function ProfileMenu({ me, onClose, onSignOut }: { me: Me; onClose: () => void; 
       <div className="who"><span className="a-avatar sm">{initials(me.name)}</span><div><b>{me.name}</b><small>{ROLE_LABELS[me.role]} · Sangam Control</small></div></div>
       {can(me.role, "shifts.use") && item("/admin/shift", "summarize", t("myShiftReport"))}
       {can(me.role, "shifts.use") && item("/admin/shift?switch=1", "swap_horiz", t("switchPost"))}
-      {item("/admin/settings", "settings", t("settings"))}
+      <button role="menuitem" onClick={onSettings}><span className="icon sm">settings</span>{t("settings")}</button>
       {can(me.role, "map.view") && item("/admin/wall", "cast", t("castWall"))}
       {TOOLS.some((x) => can(me.role, x.perm)) && <div className="sep">{t("adminTools")}</div>}
       {TOOLS.filter((x) => can(me.role, x.perm)).map((x) => <span key={x.href} style={{ display: "contents" }}>{item(x.href, x.icon, t(x.key))}</span>)}

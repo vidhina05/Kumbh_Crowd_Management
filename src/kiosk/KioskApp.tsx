@@ -23,7 +23,7 @@ type Config = {
   kiosk: { id: string; name: string; location: string };
   integrations: { sms: boolean; otpDevMode: boolean; voice: boolean; assistant: boolean; aadhaar?: boolean; aadhaarTestCards?: boolean; demo?: boolean };
   today: string;
-  alerts: { id: string; severity: string; title: string; message: string }[];
+  alerts: { id: string; severity: string; title: string; message: string; translations?: Record<string, { title: string; message: string }> }[];
   ghats: { id: string; name: string; nameHi: string; percent: number; level: Level; source: string; updatedMinutesAgo: number | null }[];
 };
 type SlotGhat = {
@@ -426,11 +426,14 @@ export default function KioskApp() {
       {/* ---------- Status strip: offline + live alerts ---------- */}
       <div className="k-alerts" aria-live="polite">
         {!online && <div className="banner warn"><Icon name="cloud_off" /> {t("offline")}</div>}
-        {config?.alerts.slice(0, 2).map((a) => (
-          <div key={a.id} className={`banner ${a.severity === "critical" ? "bad" : a.severity === "warning" ? "warn" : "info"}`}>
-            <Icon name={a.severity === "critical" ? "error" : "campaign"} /> <b>{a.title}</b> {a.message}
-          </div>
-        ))}
+        {config?.alerts.slice(0, 2).map((a) => {
+          const tr = a.translations?.[lang];
+          return (
+            <div key={a.id} className={`banner ${a.severity === "critical" ? "bad" : a.severity === "warning" ? "warn" : "info"}`} lang={tr ? lang : undefined}>
+              <Icon name={a.severity === "critical" ? "error" : "campaign"} /> <b>{tr?.title || a.title}</b> {tr?.message || a.message}
+            </div>
+          );
+        })}
       </div>
 
       <main className="k-body">

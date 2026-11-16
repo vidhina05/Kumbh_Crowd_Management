@@ -214,6 +214,10 @@ export const alerts = pgTable("alerts", {
   message: text("message").notNull(),
   ghatId: text("ghat_id").references(() => ghats.id),
   audience: text("audience").notNull().default("staff"), // staff | kiosk | both
+  translations: jsonb("translations").$type<Record<string, { title: string; message: string }>>().notNull().default({}),
+  startsAt: timestamp("starts_at", { withTimezone: true }).notNull().defaultNow(),
+  ghatIds: text("ghat_ids").array().notNull().default([]),
+  channels: text("channels").array().notNull().default(["kiosk", "staff"]),
   status: text("status").notNull().default("active"),
   createdBy: uuid("created_by").references(() => adminUsers.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

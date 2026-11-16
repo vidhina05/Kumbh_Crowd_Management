@@ -21,7 +21,7 @@ export const GET = handler(async () => {
     .select({ code: schema.lostCases.code, personName: schema.lostCases.personName, age: schema.lostCases.age, createdAt: schema.lostCases.createdAt })
     .from(schema.lostCases)
     .where(inArray(schema.lostCases.status, ["open", "searching"]));
-  const alerts = await db.select().from(schema.alerts).where(eq(schema.alerts.status, "active")).orderBy(sql`${schema.alerts.createdAt} desc`).limit(5);
+  const alerts = await db.select().from(schema.alerts).where(and(eq(schema.alerts.status, "active"), sql`${schema.alerts.startsAt} <= now()`)).orderBy(sql`${schema.alerts.createdAt} desc`).limit(5);
   const plan = await batchPlan(today);
   const [kioskRows] = await db
     .select({ total: sql<number>`count(*)::int`, online: sql<number>`count(*) filter (where ${schema.kiosks.lastSeenAt} > now() - interval '90 seconds')::int` })

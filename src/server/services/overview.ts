@@ -41,7 +41,7 @@ export async function overview() {
       .where(inArray(schema.helpRequests.status, ["open", "assigned", "in_progress"]))
       .groupBy(schema.helpRequests.type),
     db.select({ n: sql<number>`count(*)::int` }).from(schema.lostCases).where(inArray(schema.lostCases.status, ["open", "searching", "found"])),
-    db.select().from(schema.alerts).where(eq(schema.alerts.status, "active")).orderBy(desc(schema.alerts.createdAt)).limit(10),
+    db.select().from(schema.alerts).where(and(eq(schema.alerts.status, "active"), sql`${schema.alerts.startsAt} <= now()`)).orderBy(desc(schema.alerts.createdAt)).limit(10),
     db.select({ id: schema.kiosks.id, active: schema.kiosks.active, lastSeenAt: schema.kiosks.lastSeenAt }).from(schema.kiosks),
     ghatStatus(),
     db

@@ -1,6 +1,7 @@
 "use client";
 import { withBase } from "@/shared/base";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { api, ago, istDateTime, usePoll } from "@/admin/client";
 import { useMe } from "@/admin/Shell";
 import { AssignSelect, Notes } from "@/admin/CaseTools";
@@ -20,10 +21,17 @@ const NEXT: Record<string, { to: string; label: string }[]> = {
 };
 const CHIP: Record<string, string> = { open: "bad", searching: "warn", found: "info", reunited: "good", closed: "" };
 
-export default function LostPage() {
+export default function Page() {
+  return <Suspense fallback={<div className="a-empty">Loading…</div>}><LostPage /></Suspense>;
+}
+
+/** Figma "Admin / 12 Lost and found": one case at a time; "All cases" shows the list. */
+function LostPage() {
   const { can } = useMe();
+  const initialQ = useSearchParams().get("q") ?? "";
   const [status, setStatus] = useState<"active" | "reunited" | "">("active");
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(initialQ);
+  const [showList, setShowList] = useState(!initialQ);
   const { data, error, reload } = usePoll<{ cases: Case[] }>(`/api/admin/lost?${status ? `status=${status}&` : ""}${q ? `q=${encodeURIComponent(q)}` : ""}`, 8_000);
   const [sel, setSel] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -31,7 +39,7 @@ export default function LostPage() {
   const [linkCode, setLinkCode] = useState("");
   const [foundOpen, setFoundOpen] = useState(false);
   const [familyMembers, setFamilyMembers] = useState<{ id: string; name: string; age: number }[]>([]);
-  const c = data?.cases.find((x) => x.id === sel) ?? null;
+  const c = data?.cases.find((x) => x.id === sel) ?? (initialQ && data?.cases.length === 1 ? data.cases[0] : null);
   const editable = can("lost.update");
   useEffect(() => { setPhoto((p) => { if (p) URL.revokeObjectURL(p); return null; }); setLinkCode(""); }, [sel]);
   useEffect(() => {
@@ -51,85 +59,98 @@ export default function LostPage() {
     setPhoto(URL.createObjectURL(await res.blob()));
   };
 
+  const mins = (iso: string) => Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000));
+  const ini = (n: string) => n.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+  const STATUS_TXT: Record<string, string> = { open: "Reported", searching: "Searching", found: "Found", reunited: "Reunited", closed: "Closed" };
+  const list = data?.cases ?? [];
+  const showingList = showList || !c;
+
   return (
-    <>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h1 style={{ margin: 0, fontWeight: 400, fontSize: 28, flex: 1 }}>Lost &amp; found</h1>
-        <input className="input" style={{ height: 40, maxWidth: 260 }} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name or case number" aria-label="Search cases" />
-        {editable && <button className="btn btn-filled" onClick={() => setFoundOpen(true)}><span className="icon">person_pin_circle</span> Someone found</button>}
-        <div className="a-tabs" role="group" aria-label="Filter">
-          {([["active", "Open"], ["reunited", "Reunited"], ["", "All"]] as const).map(([k, l]) => <button key={k} aria-pressed={status === k} onClick={() => setStatus(k)}>{l}</button>)}
-        </div>
+    <div className="lf">
+      <div className="gd-head" style={{ gridColumn: "1 / -1" }}>
+        <h1>Lost &amp; found</h1>
+        <div className="crumb">{c && !showingList ? <><button className="linkish" onClick={() => setShowList(true)}>‹ All cases</button> · Case {c.code} · {c.status === "reunited" || c.status === "closed" ? c.status : `open ${mins(c.createdAt)} min`}</> : `${list.length} ${status === "reunited" ? "reunited" : status === "active" ? "open" : ""} cases`}</div>
       </div>
-      {foundOpen && <FoundForm onCancel={() => setFoundOpen(false)} onCreated={(id) => { setFoundOpen(false); setStatus("active"); setSel(id); void reload(); }} />}
-      <div className="a-grid-2">
-        <section className="glass a-pane">
+      {msg && <div className="banner bad" role="alert" style={{ gridColumn: "1 / -1" }}>{msg}</div>}
+      {foundOpen && <div style={{ gridColumn: "1 / -1" }}><FoundForm onCancel={() => setFoundOpen(false)} onCreated={(id) => { setFoundOpen(false); setStatus("active"); setSel(id); setShowList(false); void reload(); }} /></div>}
+
+      {showingList ? (
+        <section className="dl-card" style={{ gridColumn: "1 / -1" }} aria-labelledby="cases-h">
+          <div className="a-row" style={{ justifyContent: "space-between" }}>
+            <h2 id="cases-h">Cases</h2>
+            <div className="a-row">
+              <input className="input" style={{ height: 40, maxWidth: 240 }} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name or case number" aria-label="Search cases" />
+              <div className="fm-chips" role="group" aria-label="Filter">{([["active", "Open"], ["reunited", "Reunited"], ["", "All"]] as const).map(([k, l]) => <button key={k} className="m-chip" aria-pressed={status === k} onClick={() => setStatus(k)}>{l}</button>)}</div>
+              {editable && <button className="btn btn-filled" onClick={() => setFoundOpen(true)}><span className="icon sm">person_pin_circle</span>Someone found</button>}
+            </div>
+          </div>
           {error && <div className="banner bad">{error}</div>}
-          {!data ? <div className="a-empty">Loading…</div> : data.cases.length === 0 ? <div className="a-empty">No cases. Reports from kiosks appear here within 10 seconds.</div> : (
-            <table className="tbl">
-              <thead><tr><th>Person</th><th>Last seen</th><th>Open for</th><th>Status</th></tr></thead>
-              <tbody>
-                {data.cases.map((x) => (
-                  <tr key={x.id} className={`clickable${sel === x.id ? " selected" : ""}`} onClick={() => setSel(x.id)} tabIndex={0} onKeyDown={(e) => e.key === "Enter" && setSel(x.id)}>
-                    <td><b>{x.personName}</b>{x.age !== null && `, ${x.age}`} <span className="mono muted">{x.code}</span><div className="muted" style={{ fontSize: 12 }}>{x.description}</div></td>
-                    <td>{x.lastSeen}<div className="muted" style={{ fontSize: 12 }}>{x.kioskId ? `Reported at kiosk ${x.kioskId}` : ""}</div></td>
-                    <td>{x.closedAt ? "—" : ago(x.createdAt)}</td>
-                    <td><span className={`chip ${CHIP[x.status]}`}>{x.status}</span><div className="muted" style={{ fontSize: 12 }}>{x.assigneeName ?? "Unassigned"}</div></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {!data ? <div className="a-empty">Loading…</div> : list.length === 0 ? <div className="a-empty">No cases.</div> : (
+            <div className="lf-grid">
+              {list.map((x) => (
+                <button key={x.id} className="lf-tile" onClick={() => { setSel(x.id); setShowList(false); }}>
+                  <span className="av">{ini(x.personName)}</span>
+                  <span className="t"><b>{x.personName}{x.age !== null ? `, ${x.age}` : ""}</b><small>{x.code} · {x.lastSeen || x.description}</small></span>
+                  <span className={`chip ${CHIP[x.status] ?? ""}`}>{STATUS_TXT[x.status] ?? x.status}{x.status === "open" || x.status === "searching" ? ` · ${mins(x.createdAt)} min` : ""}</span>
+                </button>
+              ))}
+            </div>
           )}
         </section>
-        <section className="glass a-pane a-detail">
-          {!c ? <div className="a-empty">Select a case to see it.</div> : (
-            <>
-              <h2 style={{ fontSize: 22, fontWeight: 400 }}>{c.personName}{c.age !== null && `, ${c.age}`} · <span className="mono">{c.code}</span></h2>
-              {msg && <div className="banner bad">{msg}</div>}
-              <dl>
-                <dt>Wearing</dt><dd>{c.description}</dd>
-                <dt>Last seen</dt><dd>{c.lastSeen}</dd>
-                <dt>Reported by</dt><dd>{c.reporterName}{c.reporterPhoneLast4 && ` · phone ••${c.reporterPhoneLast4}`}</dd>
-                <dt>Reported</dt><dd>{istDateTime(c.createdAt)}{c.kioskId && ` at kiosk ${c.kioskId}`}</dd>
-                <dt>Family</dt>
-                <dd>
-                  {c.passCode ? <><a href={withBase("/admin/families/")}>{c.passCode}</a>{c.memberName ? ` · ${c.memberName}` : " · person not matched yet"}</> : "Not linked to a registration"}
-                  {editable && !c.passCode && (
-                    <form style={{ display: "flex", gap: 8, marginTop: 8 }} onSubmit={(e) => { e.preventDefault(); void patch({ passCode: linkCode }); }}>
-                      <input className="input" style={{ height: 36, maxWidth: 200 }} value={linkCode} onChange={(e) => setLinkCode(e.target.value.toUpperCase())} placeholder="Pass no. KMB-…" aria-label="Pass number to link" />
-                      <button className="btn btn-tonal" style={{ height: 36 }} disabled={linkCode.length < 5}>Link to registered family</button>
-                    </form>
-                  )}
-                  {editable && c.passCode && !c.memberId && familyMembers.length > 0 && (
-                    <select className="input" style={{ height: 36, maxWidth: 260, marginTop: 8 }} defaultValue="" onChange={(e) => e.target.value && patch({ memberId: e.target.value })} aria-label="Which family member is missing">
-                      <option value="">Which family member is missing?</option>
-                      {familyMembers.map((m) => <option key={m.id} value={m.id}>{m.name}, {m.age}</option>)}
-                    </select>
-                  )}
-                </dd>
-                <dt>Assigned to</dt><dd><AssignSelect value={c.assignedTo} disabled={!editable} onChange={(id) => patch({ assignedTo: id })} /></dd>
-                <dt>Status</dt><dd><span className={`chip ${CHIP[c.status]}`}>{c.status}</span></dd>
-              </dl>
-              {c.hasPhoto && ["open", "searching", "found"].includes(c.status) && (
-                <div style={{ display: "grid", gap: 8 }}>
-                  {photo ? <img src={photo} alt={`Photo of ${c.personName} from registration`} style={{ maxWidth: 220, borderRadius: 12 }} /> : (
-                    <button className="btn btn-outlined" onClick={showPhoto} style={{ justifySelf: "start" }}><span className="icon">photo_camera</span> Show registration photo</button>
-                  )}
-                  <span className="muted" style={{ fontSize: 12 }}>Opening the photo is logged. Photos are only available while the case is open.</span>
-                </div>
+      ) : c && (
+        <>
+          <section className="dl-card lf-case" aria-labelledby="case-h">
+            <div className="a-row" style={{ justifyContent: "space-between" }}>
+              <span className={`chip ${CHIP[c.status] ?? ""}`}>{STATUS_TXT[c.status] ?? c.status}{c.status === "open" || c.status === "searching" ? ` · ${mins(c.createdAt)} min` : ""}</span>
+              <button className="btn btn-text small" onClick={() => setShowList(true)}><span className="icon sm">list</span>All cases</button>
+            </div>
+            {c.assigneeName && <small className="muted">{c.assigneeName} is on this case</small>}
+            <div><h2 id="case-h" className="lf-name">{c.personName.split(" ")[0]}</h2><div className="lf-sub">{c.personName.split(" ").slice(1).join(" ") || "Name not known"}{c.age !== null ? `, ${c.age} years` : ""}</div></div>
+            <div className="lf-avatar">{photo ? <img src={photo} alt={`Photo of ${c.personName} from registration`} /> : <span>{ini(c.personName)}</span>}</div>
+            {c.hasPhoto && !photo && <button className="btn btn-text small" style={{ alignSelf: "center" }} onClick={showPhoto}><span className="icon sm">photo_camera</span>Show registration photo (logged)</button>}
+            <p className="lf-last">{c.lastSeen ? `Last seen: ${c.lastSeen}.` : "Where they were last seen isn't known."}</p>
+            <div className="fm-chips">{c.description.split(/[,.;]/).map((d) => d.trim()).filter(Boolean).slice(0, 6).map((d) => <span key={d} className="chip">{d}</span>)}</div>
+            <div className="lf-rep"><span className="av">{ini(c.reporterName)}</span><span className="t"><b>{c.reporterName}{c.memberName ? `, family of ${c.memberName}` : ""}</b><small>Reported {istDateTime(c.createdAt)}{c.kioskId ? ` at kiosk ${c.kioskId}` : ""}{c.reporterPhoneLast4 ? ` · phone ••${c.reporterPhoneLast4}` : ""}</small></span></div>
+            <div className="lf-with">
+              <small>Family</small>
+              {c.passCode ? <span><a href={withBase(`/admin/families/?q=${c.passCode}`)} className="mono">{c.passCode}</a>{c.memberName ? ` · ${c.memberName}` : " · person not matched yet"}</span> : <span className="muted">Not linked to a registration</span>}
+              {editable && !c.passCode && (
+                <form className="a-row" onSubmit={(e) => { e.preventDefault(); void patch({ passCode: linkCode }); }}>
+                  <input className="input" style={{ height: 36, maxWidth: 180 }} value={linkCode} onChange={(e) => setLinkCode(e.target.value.toUpperCase())} placeholder="Pass no. KMB-…" aria-label="Pass number to link" />
+                  <button className="btn btn-tonal" style={{ height: 36 }} disabled={linkCode.length < 5}>Link family</button>
+                </form>
               )}
-              {editable && NEXT[c.status]?.length > 0 && (
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {NEXT[c.status].map((n) => <button key={n.to} className={`btn ${n.to === "reunited" || n.to === "found" ? "btn-filled" : n.to === "closed" ? "btn-text" : "btn-tonal"}`} onClick={() => patch({ status: n.to })}>{n.label}</button>)}
-                </div>
+              {editable && c.passCode && !c.memberId && familyMembers.length > 0 && (
+                <select className="input" style={{ height: 36, maxWidth: 260 }} defaultValue="" onChange={(e) => e.target.value && patch({ memberId: e.target.value })} aria-label="Which family member is missing">
+                  <option value="">Which family member is missing?</option>
+                  {familyMembers.map((m) => <option key={m.id} value={m.id}>{m.name}, {m.age}</option>)}
+                </select>
               )}
-              {c.status === "reunited" && <Reunited caseId={c.id} />}
-              {can("faces.search") && ["open", "searching", "found"].includes(c.status) && <FaceSearch caseId={c.id} onChanged={reload} />}
-              <Notes kind="lost" id={c.id} canWrite={editable} />
-            </>
-          )}
-        </section>
-      </div>
-    </>
+              <small>On this case</small>
+              <AssignSelect value={c.assignedTo} disabled={!editable} onChange={(id) => patch({ assignedTo: id })} />
+            </div>
+            {c.status === "reunited" && <Reunited caseId={c.id} />}
+            <div style={{ flex: 1 }} />
+            {editable && NEXT[c.status]?.length > 0 && (
+              <div className="a-row">{NEXT[c.status].map((n) => <button key={n.to} className={`btn ${n.to === "reunited" || n.to === "found" ? "btn-outlined" : n.to === "closed" ? "btn-text" : "btn-tonal"}`} onClick={() => patch({ status: n.to })}>{n.to === "found" ? "Mark as found" : n.label}</button>)}</div>
+            )}
+          </section>
+          <section className="dl-card lf-sight" aria-labelledby="sight-h">
+            <div className="a-row" style={{ justifyContent: "space-between" }}><h2 id="sight-h">Face matches</h2><small className="muted">Families who said yes to face matching at registration</small></div>
+            {can("faces.search") && ["open", "searching", "found"].includes(c.status) ? <FaceSearch caseId={c.id} onChanged={reload} /> : <div className="muted">{c.status === "reunited" ? "This person is back with their family." : "Face matching isn't available for this case."}</div>}
+          </section>
+          <section className="dl-card lf-time" aria-labelledby="tl-h">
+            <h2 id="tl-h">Timeline</h2>
+            <div className="lf-steps">
+              <span className="done"><i className="icon sm">campaign</i><b>{new Date(c.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" })}</b><small>Reported{c.kioskId ? ` at kiosk ${c.kioskId}` : ""}</small></span>
+              <span className={c.status !== "open" ? "done" : ""}><i className="icon sm">search</i><b>{c.status !== "open" ? "Searching" : "—"}</b><small>{c.assigneeName ?? "Not assigned yet"}</small></span>
+              <span className={["found", "reunited"].includes(c.status) ? "done" : ""}><i className="icon sm">person_pin_circle</i><b>{["found", "reunited"].includes(c.status) ? "Found" : "—"}</b><small>Found</small></span>
+              <span className={c.status === "reunited" ? "done" : ""}><i className="icon sm">favorite</i><b>{c.closedAt ? new Date(c.closedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }) : "—"}</b><small>Reunited</small></span>
+            </div>
+            <Notes kind="lost" id={c.id} canWrite={editable} />
+          </section>
+        </>
+      )}
+    </div>
   );
 }

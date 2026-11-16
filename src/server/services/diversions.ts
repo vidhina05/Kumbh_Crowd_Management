@@ -1,6 +1,6 @@
 import "server-only";
 import bcrypt from "bcryptjs";
-import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { getDb, schema } from "../db";
 import { decrypt, randomCode } from "../crypto";
 import { HttpError, badRequest, conflict, forbidden, notFound } from "../http";
@@ -369,3 +369,26 @@ export async function upcomingSlotsToday() {
 }
 
 export type { SlotRow };
+
+/** Remind families who haven't confirmed the change yet (SMS when connected; always logged). */
+export async function remindDiversion(id: string, actorId: string) {
+  const db = await getDb();
+  const [d] = await db.select().from(schema.diversions).where(eq(schema.diversions.id, id));
+  if (!d) throw notFound();
+  if (d.status !== "sent") throw new HttpError(409, "not_live", "Only a live diversion can send reminders.");
+  const [toGhat] = await db.select().from(schema.ghats).where(eq(schema.ghats.id, d.toGhatId));
+  const pending = await db
+    .select({ familyId: schema.diversionMoves.familyId, phoneEnc: schema.families.phoneEnc, passCode: schema.families.passCode })
+    .from(schema.diversionMoves)
+    .innerJoin(schema.families, eq(schema.diversionMoves.familyId, schema.families.id))
+    .where(and(eq(schema.diversionMoves.diversionId, id), isNull(schema.diversionMoves.confirmedAt)));
+  let sent = 0, notConnected = 0;
+  for (const f of pending) {
+    const r = await sendTextSms(decrypt(f.phoneEnc), "diversion", { ghat: toGhat.name, gate: toGhat.gate, pass: f.passCode });
+    if (r.sent) sent++;
+    else if (r.reason === "not_configured") notConnected++;
+  }
+  await db.insert(schema.diversionEvents).values({ diversionId: id, kind: "reminded", message: sent ? `Reminder sent to ${sent} families` : `Reminder for ${pending.length} families: SMS not connected, so they'll see it at kiosks and on the pass page`, actorId });
+  await audit({ actorType: "admin", actorId, action: "diversion.remind", entityType: "diversion", entityId: id, details: { pending: pending.length, sent, notConnected } });
+  return { pending: pending.length, sent, notConnected };
+}
