@@ -25,7 +25,7 @@ jobs:
       - name: Secret check (files)
         run: npm run lint:secrets
       - name: Secret scan (full Git history)
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Dependency audit
