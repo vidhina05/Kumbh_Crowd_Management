@@ -202,6 +202,8 @@ const A = await launch(process.env.FACE_FEED);
     await page.waitForFunction(() => /Face saved for matching|We couldn't see one clear face/.test(document.body.innerText), { timeout: 120_000 });
     if (!(await page.evaluate(() => document.body.innerText.includes("Face saved for matching")))) {
       if (process.env.FACE_FEED) throw new Error("No face found in live camera");
+      await h.click("Back", ".k-footer button"); // test pattern camera has no face: leave the screen as a person would
+      await h.click("Back", ".k-footer button");
       return;
     }
     await h.type("#l4f", state.phone.slice(-4));
