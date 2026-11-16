@@ -74,6 +74,18 @@ const H = (page) => ({
   }, method, url, body, headers, new URL(SITE).pathname),
 });
 
+/** Demo sign-in from the login page: tap the person, start the shift if asked, land in the control room. */
+async function signIn(page, h, name) {
+  await h.click(name, ".li-demo button");
+  await page.waitForFunction(() => document.querySelector(".a-rail") || [...document.querySelectorAll("button")].some((b) => b.textContent.includes("Start shift")) || document.body.innerText.includes("6-digit code"), { timeout: 60_000 });
+  if (await page.evaluate(() => !document.querySelector(".a-rail") && [...document.querySelectorAll("button")].some((b) => b.textContent.includes("Start shift")))) await h.click("Start shift");
+}
+async function signOut(page, h) {
+  await page.click(".a-rail .a-avatar");
+  await h.click("Sign out", ".a-menu button");
+  await page.waitForFunction(() => location.pathname.includes("/admin/login"));
+}
+
 async function step(name, fn) {
   const t0 = Date.now();
   try {
@@ -117,9 +129,8 @@ const A = await launch(process.env.FACE_FEED);
     await h.text("I agree");
     await page.evaluate(() => { const cb = [...document.querySelectorAll(".k-check")].find((l) => l.textContent.includes("face matching")).querySelector("input"); cb.click(); });
     await h.click("I agree");
-    await h.text("Scan Aadhaar card");
-    await h.shot("a03-identify");
-    await h.click("Scan Aadhaar card");
+    await h.text("Waiting for your card");
+    await h.text("No Aadhaar? Use your phone");
     await h.text("Demo test cards");
     await h.shot("a04-aadhaar-scan");
     await h.click("Sunita Verma");
@@ -151,14 +162,17 @@ const A = await launch(process.env.FACE_FEED);
     await h.type('input[id^="n-"]', "Meera");
     await h.type('input[id^="a-"]', "6");
     await h.click("Save", ".card button");
-    await h.click("Continue", ".k-footer button");
-    await page.waitForSelector(".k-time:not([disabled])", { timeout: 30_000 });
+    await h.click("Choose a slot", ".k-footer button");
+    await page.waitForSelector(".k-ghat > button:not([disabled])", { timeout: 30_000 });
     // tomorrow, so the slot is always in the future
-    await page.evaluate(() => document.querySelectorAll('[role=radiogroup] .k-option')[1].click());
-    await page.waitForSelector(".k-time:not([disabled])");
-    await page.evaluate(() => document.querySelector(".k-time:not([disabled])").click());
-    await h.click("Continue", ".k-footer button");
-    await h.text("Book ");
+    await page.evaluate(() => document.querySelectorAll(".k-days button")[1].click());
+    await sleep(1500);
+    await page.waitForSelector(".k-ghat > button:not([disabled])");
+    await page.evaluate(() => document.querySelector(".k-ghat > button:not([disabled])").click());
+    await page.waitForSelector(".k-ghat.on");
+    await h.shot("a07a-slot");
+    await h.click("Book ", ".k-footer button");
+    await h.text("Check and confirm");
     await h.click("Book ", ".k-footer button");
     await page.waitForFunction(() => /Pass · KMB-/.test(document.body.innerText), { timeout: 30_000 });
     state.pass = await page.evaluate(() => document.body.innerText.match(/KMB-[A-Z0-9-]+/)[0]);
@@ -175,7 +189,7 @@ const A = await launch(process.env.FACE_FEED);
     await h.type("#l4", state.phone.slice(-4));
     await h.click("Continue", ".k-footer button");
     await h.text(state.pass);
-    await h.text("Sunita Verma");
+    await h.text("Sunita");
     await h.shot("a08-find-by-pass");
     await h.click("Done", ".k-footer button");
   });
@@ -213,7 +227,7 @@ const A = await launch(process.env.FACE_FEED);
     await h.click("EN", ".k-seg button");
     await h.click("Continue in English");
     await h.click("I agree");
-    await h.click("Phone number");
+    await h.click("No Aadhaar? Use your phone");
     const ph = "97" + String(Date.now()).slice(-8);
     await h.type("#phone", ph);
     await h.click("Send code", ".k-footer button");
@@ -249,79 +263,104 @@ const A = await launch(process.env.FACE_FEED);
   });
 
   await step("Kiosk: dark theme toggle", async () => {
-    await page.click('.k-top .icon-btn');
+    await page.click('.k-themeseg button[aria-checked="false"]');
     if ((await page.evaluate(() => document.documentElement.dataset.theme)) !== "dark") throw new Error("theme not dark");
     await h.shot("a11-kiosk-dark");
-    await page.click('.k-top .icon-btn');
+    await page.click('.k-themeseg button[aria-checked="false"]');
+  });
+
+  await step("Kiosk: every one of the 24 languages switches the whole screen", async () => {
+    await h.go("/kiosk/");
+    await page.waitForSelector(".k-option");
+    await h.click("+ ", ".k-option");
+    const codes = await page.$$eval(".k-lang-grid .k-option[lang]", (bs) => bs.map((b) => b.getAttribute("lang")));
+    if (codes.length !== 24) throw new Error(`expected 24 languages, saw ${codes.length}`);
+    await page.evaluate(() => document.querySelector('.k-lang-grid .k-option[lang="en"]').click());
+    await sleep(200);
+    const english = await page.evaluate(() => document.querySelector(".k-guide p").innerText);
+    for (const c of codes) {
+      await page.evaluate((x) => document.querySelector(`.k-lang-grid .k-option[lang="${x}"]`).click(), c);
+      await sleep(150);
+      const r = await page.evaluate(() => ({ lang: document.querySelector(".k-root").getAttribute("lang"), dir: document.documentElement.dir, body: document.querySelector(".k-guide p").innerText, btn: document.querySelector(".k-footer .btn-filled").innerText }));
+      if (r.lang !== c) throw new Error(`${c}: root lang is ${r.lang}`);
+      if (c !== "en" && r.body === english) throw new Error(`${c}: guide text is still English`);
+      if (["ur", "ks", "sd"].includes(c) !== (r.dir === "rtl")) throw new Error(`${c}: direction ${r.dir}`);
+    }
+    await page.evaluate(() => document.querySelector('.k-lang-grid .k-option[lang="ur"]').click());
+    await h.shot("a13-kiosk-urdu-rtl");
+    await page.evaluate(() => document.querySelector('.k-lang-grid .k-option[lang="en"]').click());
+    await h.click("Back", ".k-footer button");
   });
 
   // ----------------------------------------------------------- Control room
   await step("Control room: demo sign-in as super admin", async () => {
     await h.go("/admin/");
     await page.waitForFunction(() => location.pathname.includes("/admin/login"));
-    await h.click("Kavita Sharma");
-    await h.text("Command overview");
+    await h.shot("b00-login");
+    await signIn(page, h, "Kavita Sharma");
+    await page.waitForSelector(".a-rail");
+    await page.waitForSelector(".m-callout");
     await sleep(800);
     await h.noErrorBanner();
     await h.shot("b01-overview");
   });
 
   await step("Overview → tap a ghat on the map → ghat detail with chart", async () => {
-    await page.evaluate(() => document.querySelector('.crowd-map .ghat-pin[aria-label^="Sangam"]').dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    await h.text("Last 2 hours and the next hour");
-    await page.waitForSelector(".line-chart path");
+    await h.go("/admin/map/");
+    await page.waitForSelector('.m-callout[aria-label^="Sangam"]');
+    await page.click('.m-callout[aria-label^="Sangam"]');
+    await h.click("Full detail");
+    await h.text("bathing zone");
     await h.shot("b02-ghat");
   });
 
   await step("Ghat detail: hold a gate, alert raised, reopen", async () => {
-    await h.click("Hold", "td button");
-    await h.text("put on hold");
-    await h.text("on hold");
-    await h.click("Reopen", "td button");
-    await h.text("Gate reopened");
+    await h.click("Hold ", ".gd-side button");
+    await h.click("Hold ", ".dialog button.btn-filled");
+    await h.text("Reopen ");
+    await h.click("Reopen ", ".gd-side button");
+    await page.waitForFunction(() => [...document.querySelectorAll(".gd-side button")].some((b) => b.textContent.includes("Hold ")));
   });
 
-  await step("Ghat detail: staff count overrides the simulator", async () => {
-    await h.type("#cnt", "20000");
-    await h.click("Save count");
-    await h.text("Saved 20,000 people");
-    await h.text("Entered by staff");
+  await step("Ghat detail: replay slider and scenario switch", async () => {
+    await page.$eval('input[type=range][aria-label^="Scrub"]', (el) => { el.value = "2"; el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); });
+    await page.evaluate(() => [...document.querySelectorAll(".gd-seg button")].pop()?.click());
+    await h.noErrorBanner();
   });
 
   await step("Live map: 2D, 3D, rotate, select a ghat", async () => {
     await h.go("/admin/map/");
-    await page.waitForSelector(".crowd-map");
-    await h.click("3D columns");
-    await page.waitForSelector(".crowd-map.iso .iso-col");
-    await h.click("", 'button[aria-label="Rotate right"]');
-    await page.evaluate(() => document.querySelector(".crowd-map.iso .iso-col").dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await page.waitForSelector(".m-callout");
+    await h.click("3D view", ".a-tabs-sec a");
+    await page.waitForFunction(() => location.search.includes("view=3d"));
+    await page.click('button[aria-label="Zoom in"]');
+    await page.waitForSelector('[aria-label$="% full"]');
+    await page.evaluate(() => document.querySelector('[aria-label$="% full"]').click());
     await h.text("Full detail");
     await h.shot("b03-map-3d");
-    await h.click("2D plan");
-    await page.waitForSelector(".crowd-map .ghat-pin");
+    await h.click("Live map", ".a-tabs-sec a");
+    await page.waitForSelector(".m-callout");
   });
 
   await step("Batches: grid and suggested fixes", async () => {
     await h.go("/admin/batches/");
-    await page.waitForSelector(".slot-cell");
+    await page.waitForFunction(() => document.querySelectorAll(".bp-grid i, .bp-dot, [class^=bp-] button").length > 0 || document.body.innerText.includes("Fix these first"));
     await h.shot("b04-batches");
   });
 
   await step("Diversion: plan in 3 steps, second check refuses the same person, another staff approves, undo", async () => {
-    await h.go("/admin/batches/");
-    await h.click("Plan this diversion");
-    await page.waitForFunction(() => location.pathname.includes("/diversions/new"));
-    await page.waitForSelector('.a-pick input[type=checkbox]:checked');
-    await h.click("Next ·");
-    await h.text("Choose a ghat");
-    await page.waitForSelector('.a-pick input[type=radio]:checked');
-    await h.shot("b05-divert-step2");
-    await h.click("Next", ".a-pane button.btn-filled");
-    await h.text("Check the plan");
-    await h.type("#reason", "Sangam batches over-full");
-    await h.click("Send for second check");
-    await page.waitForFunction(() => location.pathname.includes("/diversions/view"));
-    await h.text("Waiting for second check");
+    await h.go("/admin/diversions/new/?from=sangam");
+    await h.text("Pick batches");
+    await page.waitForSelector(".dv-batch:not(.locked) input");
+    if (!(await page.evaluate(() => document.querySelectorAll(".dv-batch input:checked").length))) await page.evaluate(() => [...document.querySelectorAll(".dv-batch:not(.locked) input")].pop().click());
+    await page.waitForSelector('.dv-opt input[type=radio]:checked', { timeout: 30_000 });
+    await h.shot("b05-divert");
+    // first try: the person who planned it can't be the second check
+    await h.type('input[aria-label="Approver\'s work email"]', "kavita@demo.sangamseva.in");
+    await h.type('input[aria-label="Approver\'s password"]', "Sangam-demo-2026");
+    await h.click("Divert ", "button.btn-filled");
+    await page.waitForFunction(() => location.pathname.includes("/diversions/view"), { timeout: 30_000 });
+    await h.text("Waiting for a second check");
     await h.type("#ap-email", "kavita@demo.sangamseva.in");
     await h.type("#ap-pw", "Sangam-demo-2026");
     await h.click("Approve and send");
@@ -330,9 +369,8 @@ const A = await launch(process.env.FACE_FEED);
     await h.type("#ap-pw", "Sangam-demo-2026");
     await h.click("Approve and send");
     await h.text("Approved and sent");
-    await h.text("Sent to families");
     await h.shot("b06-diversion-live");
-    await h.click("Undo this diversion");
+    await h.click("Undo diversion");
     await h.click("Yes, undo");
     await h.text("Undone.");
   });
@@ -378,8 +416,6 @@ const A = await launch(process.env.FACE_FEED);
   });
 
   await step("Sensors: register a camera counter and get its key once", async () => {
-    await h.go("/admin/");
-    await h.text("Command overview");
     await h.go("/admin/sensors/");
     await page.waitForSelector("table.a-table tbody tr");
     await page.waitForSelector('#s-ghat option[value="sangam"]');
@@ -418,7 +454,8 @@ const A = await launch(process.env.FACE_FEED);
     await h.type("#f-desc", "Woman in a blue saree, looks confused");
     await h.type("#f-loc", "Lost & found tent, Sector 4");
     await h.click("Open case");
-    await h.text("Face match");
+    await h.text("Face matches");
+    await h.shot("b09a-lost-case");
   });
 
   await step("Lost & found: face search finds the family who opted in, staff confirm, reunite, thank", async () => {
@@ -432,7 +469,7 @@ const A = await launch(process.env.FACE_FEED);
     await h.text("Confirmed by staff");
     await h.text("found"); // confirming the match links the family and marks the case found
     await h.text("Sunita Verma");
-    await h.click("Reunited with family", ".a-detail button");
+    await h.click("Reunited with family", ".lf-case button");
     await h.text("Reunited");
     await h.click("Thank ");
     await h.text("Thank-you recorded");
@@ -441,20 +478,22 @@ const A = await launch(process.env.FACE_FEED);
 
   await step("Shift: start, hand over to a colleague with notes, report", async () => {
     await h.go("/admin/shift/");
-    await h.click("Start shift");
-    await h.text("Still open for the next shift");
+    if (await page.evaluate(() => [...document.querySelectorAll("button")].some((b) => b.textContent.includes("Start shift")))) await h.click("Start shift");
+    await h.text("Hand over");
+    await h.text("at the ghats at the busiest moment");
     await h.select("#to", await page.$eval("#to option:nth-child(2)", (o) => o.value));
     await h.type("#notes", "Watch Sangam gate 3 after 06:00.");
-    await h.click("End shift");
-    await h.text("handed over");
-    await h.text("Handover notes");
+    await h.shot("b11a-shift-report");
+    await h.click("End shift and hand over");
+    await h.text("Handed over");
+    await h.text("Watch Sangam gate 3");
     await h.shot("b11-shift-report");
   });
 
   await step("Sahayak answers from live numbers without AI", async () => {
     await h.go("/admin/");
-    await h.text("Command overview");
-    await h.click("Ask Sahayak");
+    await page.waitForSelector(".a-rail");
+    await page.click('.a-fab');
     await h.click("Which ghat has room right now?");
     await h.text("Built-in answer (no AI)", 30_000);
     await h.shot("b12-sahayak");
@@ -467,16 +506,49 @@ const A = await launch(process.env.FACE_FEED);
     await page.waitForSelector(".wall .crowd-map");
     await h.shot("b13-wall");
     await h.click("Exit wall view");
-    await h.text("Command overview");
+    await page.waitForSelector(".a-rail");
   });
 
   await step("Every other control-room page loads without errors", async () => {
-    for (const [path, t] of [["/admin/families/", "Families"], ["/admin/help/", "Help"], ["/admin/alerts/", "Alerts"], ["/admin/kiosks/", "Kiosks"], ["/admin/reports/", "Reports"], ["/admin/users/", "Staff"], ["/admin/audit/", "Activity"], ["/admin/diversions/", "Diversions"], ["/admin/settings/", "Connections"]]) {
+    for (const [path, t] of [["/admin/families/", "Families"], ["/admin/help/", "Help requests"], ["/admin/lost/", "Lost & found"], ["/admin/alerts/", "Alerts"], ["/admin/kiosks/", "Kiosks"], ["/admin/reports/", "Reports"], ["/admin/users/", "Staff"], ["/admin/audit/", "Activity"], ["/admin/diversions/", "Diversions"], ["/admin/sensors/", "Crowd sensors"], ["/admin/settings/", "Connections"]]) {
       await h.go(path);
       await h.text(t);
       await sleep(1200);
       await h.noErrorBanner();
     }
+  });
+
+  await step("Help requests: pick a helper and send them", async () => {
+    await h.go("/admin/help/");
+    await h.text("Who can help");
+    if (await page.$(".hp-row")) {
+      await page.click(".hp-row");
+      await page.waitForSelector(".hp-helper");
+      await page.click(".hp-helper");
+      await h.click("Send ", ".hp-help button");
+      await h.text("on the way");
+    }
+    await h.shot("b15-help");
+  });
+
+  await step("Settings sheet: density, motion, sounds, keyboard shortcuts", async () => {
+    await h.go("/admin/");
+    await page.waitForSelector(".a-rail");
+    await page.click(".a-rail .a-avatar");
+    await h.click("Settings", ".a-menu button");
+    await page.waitForSelector(".st-sheet");
+    await h.click("Compact", ".st-seg button");
+    if ((await page.evaluate(() => document.documentElement.dataset.density)) !== "compact") throw new Error("density not applied");
+    await page.click('.st-switch[aria-label="Reduce motion"]');
+    if ((await page.evaluate(() => document.documentElement.dataset.motion)) !== "reduce") throw new Error("reduce motion not applied");
+    await h.shot("b16-settings-sheet");
+    await page.click('.st-switch[aria-label="Reduce motion"]');
+    await h.click("Desk", ".st-seg button");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector(".st-sheet"));
+    await page.keyboard.press("/");
+    await page.waitForSelector(".a-search-pop");
+    await page.keyboard.press("Escape");
   });
 
   await step("Settings: turn on two-step sign-in with an authenticator code", async () => {
@@ -492,20 +564,20 @@ const A = await launch(process.env.FACE_FEED);
   });
 
   await step("Sign out, sign in again with password + 6-digit code", async () => {
-    await page.click('button[aria-label="Sign out"]');
-    await page.waitForFunction(() => location.pathname.includes("/admin/login"));
-    await h.click("Kavita Sharma");
-    await h.text("Enter your 6-digit code");
+    await signOut(page, h);
+    await signIn(page, h, "Kavita Sharma");
+    await h.text("6-digit code");
     while (Math.floor(Date.now() / 30000) === state.mfaStep) await sleep(1000); // a code can't be used twice
-    await h.type("#code", totp(state.secret));
+    await h.type("input[autocomplete=one-time-code]", totp(state.secret));
     await h.click("Verify and sign in");
-    await h.text("Command overview");
+    await page.waitForFunction(() => document.querySelector(".a-rail") || [...document.querySelectorAll("button")].some((b) => b.textContent.includes("Start shift")));
+    if (!(await page.$(".a-rail"))) await h.click("Start shift");
+    await page.waitForSelector(".a-rail");
   });
 
   await step("A help-desk account sees only its own areas", async () => {
-    await page.click('button[aria-label="Sign out"]');
-    await page.waitForFunction(() => location.pathname.includes("/admin/login"));
-    await h.click("Anjali Gupta");
+    await signOut(page, h);
+    await signIn(page, h, "Anjali Gupta");
     await page.waitForSelector(".a-rail");
     const nav = await page.$$eval(".a-rail .a-dest", (as) => as.map((a) => a.textContent.trim()));
     if (nav.includes("Staff") || nav.includes("Diversions") || nav.includes("Sensors")) throw new Error("help desk sees: " + nav.join(", "));
@@ -514,7 +586,7 @@ const A = await launch(process.env.FACE_FEED);
   });
 
   await step("Reset demo returns to fresh data", async () => {
-    await h.click("Reset demo");
+    await h.click("Reset", ".demo-bar button, [class*=demo] button");
     await page.waitForNavigation({ waitUntil: "networkidle2" }).catch(() => undefined);
     await page.waitForFunction(() => window.__demoApi, { timeout: 120_000 });
     await h.go("/admin/");
@@ -531,8 +603,8 @@ if (process.env.CROWD_FEED) {
   console.log("Browser B — camera counter on a crowd image");
   await step("Camera counter counts a crowd", async () => {
     await h.go("/admin/login/");
-    await h.click("Kavita Sharma");
-    await h.text("Command overview");
+    await signIn(page, h, "Kavita Sharma");
+    await page.waitForSelector(".a-rail");
     const s = await h.api("POST", "/api/admin/sensors", { name: "Crowd cam", kind: "camera_counter", ghatId: "sangam" });
     await h.go(`/camera/?sensor=${s.body.id}`);
     await h.type("#skey", s.body.key);

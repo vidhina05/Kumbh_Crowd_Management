@@ -24,12 +24,17 @@ Automated checks run on the final code:
 | 3 | Medium | Photos were only checked by their declared type | **Fixed**: bytes must have JPEG start/end markers; served only as `image/jpeg` with `nosniff` |
 | 4 | Medium | Free text in closed help requests was kept forever | **Fixed**: cleared by the retention job after `RETENTION_HOURS` |
 | 5 | Medium | A missing-person report from an unverified reporter couldn't be linked to the family's registration | **Fixed**: staff can link by pass number; the link is audited |
-| 6 | Medium | CSP allows `'unsafe-inline'` scripts (needed for Next.js inline bootstrapping and the theme script) | **Open**: move to nonce-based CSP via `proxy.ts` before launch |
-| 7 | Medium | No multi-factor sign-in for staff | **Open**: add TOTP for super admins and operations before launch |
-| 8 | Low | Rate limits are per server instance (in memory) | **Open**: add Upstash Redis when running several instances. Login lockout and OTP limits are already in the database |
+| 6 | Medium | CSP allowed `'unsafe-inline'` scripts | **Fixed**: per-request nonce CSP in `src/proxy.ts` with `'strict-dynamic'`; API responses get `default-src 'none'`. The static GitHub Pages demo can't send headers, so it has no CSP; it holds only invented data |
+| 7 | Medium | No multi-factor sign-in for staff | **Fixed**: TOTP (RFC 6238, codes can't be replayed) required for roles in `MFA_REQUIRED_ROLES`; second approver for diversions must also pass it |
+| 8 | Low | Rate limits were per server instance (in memory) | **Fixed when configured**: Upstash Redis REST adapter (`UPSTASH_REDIS_REST_*`); falls back to memory without it. Login lockout and OTP limits are in the database either way |
 | 9 | Low | The kiosk device token is kept in the kiosk browser's `localStorage` | **Accepted**: kiosks run in locked kiosk mode; tokens can be rotated or disabled from Admin → Kiosks; CSP limits script injection |
 | 10 | Low | 4-digit OTP | **Accepted**: 5 tries per code, 3 codes per number per 10 minutes, so about 15 guesses per 10 minutes (0.15%) |
 | 11 | Info | Staff can only reset passwords through a super admin (no email reset) | By design for a closed control room |
+| 12 | Medium | Face sign-in for staff could become the only way in, or be fooled by a photo | **Mitigated**: opt-in per person; 1:1 match against that staff ID's own encrypted template (no 1:N search of staff); on-device liveness and anti-spoof scores must pass; 3 misses lock face sign-in and PIN/password + code always works. Residual risk: browser-side liveness can be beaten by a good video replay, so face alone is never enough for super admins (TOTP still required) |
+| 13 | Medium | Face matching of pilgrims is sensitive biometric processing | **Mitigated**: separate explicit consent at the kiosk (default off); templates (not photos) encrypted, deleted with the family after `RETENTION_HOURS`; only matched against families who said yes; matches are suggestions a person must confirm; no camera-wide or crowd face identification exists anywhere in the code (the camera counter counts faces, it never identifies them) |
+| 14 | Low | Aadhaar | **Mitigated**: only the Secure QR is read; the UIDAI signature is checked against `AADHAAR_UIDAI_CERT_PEM`; only the last 4 digits and a keyed hash are stored, never the number, photo or address |
+| 15 | Low | Kiosk voice input without Bhashini uses the browser's speech recognition, which in Chrome sends audio to Google | **Accepted for the prototype, disclosed**: Bhashini (Government of India) is used whenever its key is set; otherwise the mic is optional and only used when tapped |
+| 16 | Info | All 23 non-English kiosk dictionaries are drafts | **Open**: native-speaker review before launch, especially Bodo, Kashmiri, Sindhi, Manipuri (Meetei Mayek) and Santali (Ol Chiki). Every key and placeholder is present (unit-tested) |
 
 ## How each OWASP risk is handled
 

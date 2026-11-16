@@ -138,3 +138,7 @@
 .k-bands { background: color-mix(in srgb, var(--primary) 6%, var(--surface)); }
 [dir="rtl"] .k-option, [dir="rtl"] .k-guide, [dir="rtl"] .k-action { text-align: right; }
 :root[data-theme="dark"] .k-themeseg button[aria-checked="true"] { background: var(--on-surface); color: var(--surface); }
+.k-action .qr-scan { max-width: none; aspect-ratio: auto; height: clamp(180px, 30vh, 260px); }
+.k-crowd { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 700px) { .k-crowd { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.k-infos > div { padding: 10px 12px; } .k-infos { gap: 8px; }

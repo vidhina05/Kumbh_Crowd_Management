@@ -95,7 +95,7 @@ export async function seedDemo(kioskToken: string, opts: { slotCapacityDivisor?:
                CASE WHEN k = 1 THEN 35 + (length(ins.leader_name) * 7) % 30 WHEN k = 2 THEN 33 + (k * 5) % 20 WHEN k = 3 THEN 6 + (length(ins.pass_code) % 9) ELSE 66 + k END,
                CASE WHEN k = 1 THEN 'self' WHEN k = 2 THEN 'spouse' WHEN k = 3 THEN 'child' ELSE 'parent' END,
                k = 1,
-               CASE WHEN k = 1 OR k = 3 OR k >= 4 THEN 'WB-D' || substr(md5(ins.id::text || k::text), 1, 8) ELSE NULL END,
+               CASE WHEN k = 1 OR k = 3 OR k >= 4 THEN 'WB-D' || substr(md5(ins.id::text || '-' || k::text), 1, 14) ELSE NULL END,
                k - 1
         FROM ins JOIN input i ON i.pass_code = ins.pass_code
         CROSS JOIN LATERAL generate_series(1, i.size) AS k

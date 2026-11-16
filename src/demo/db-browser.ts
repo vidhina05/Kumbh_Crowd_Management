@@ -13,12 +13,29 @@ type DB = ReturnType<typeof drizzle<typeof schema>>;
 type Raw = { exec: (sql: string) => Promise<unknown>; query: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }> };
 
 let pending: Promise<{ db: DB; raw: Raw }> | null = null;
+let workerRef: Worker | null = null;
+let flushId = 0;
+
+/** Wait until every change so far is stored in IndexedDB. Called after each request that changes data. */
+export function flushToDisk(): Promise<void> {
+  const w = workerRef;
+  if (!w) return Promise.resolve();
+  const id = ++flushId;
+  return new Promise((resolve) => {
+    const t = setTimeout(finish, 5000);
+    function finish() { clearTimeout(t); w!.removeEventListener("message", onMsg); resolve(); }
+    function onMsg(e: MessageEvent) { if (e.data?.type === "sangam-flushed" && e.data.id === id) finish(); }
+    w.addEventListener("message", onMsg);
+    w.postMessage({ type: "sangam-flush", id });
+  });
+}
 
 export const DEMO_DB_NAME = "idb://sangam-seva-demo";
 
 async function create(): Promise<{ db: DB; raw: Raw }> {
   const workerUrl = new URL("./pg-worker.js", import.meta.url);
-  const client = await PGliteWorker.create(new Worker(workerUrl, { type: "module", name: "sangam-db" }), { dataDir: DEMO_DB_NAME });
+  workerRef = new Worker(workerUrl, { type: "module", name: "sangam-db" });
+  const client = await PGliteWorker.create(workerRef, { dataDir: DEMO_DB_NAME });
   const db = drizzle(client as never, { schema }) as unknown as DB;
   const raw: Raw = {
     exec: (s) => client.exec(s),

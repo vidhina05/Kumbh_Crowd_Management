@@ -77,7 +77,7 @@ describe("kiosk device authentication", () => {
     expect(ok.status).toBe(200);
     const body = await ok.json();
     expect(body.kiosk.id).toBe("K-17");
-    expect(body.integrations).toEqual({ sms: false, otpDevMode: true, voice: false, assistant: false });
+    expect(body.integrations).toMatchObject({ sms: false, otpDevMode: true, voice: false, assistant: false, aadhaar: false, simulator: false });
     expect(JSON.stringify(body)).not.toContain("tokenHash");
   });
   it("a kiosk token cannot reach admin endpoints", async () => {
@@ -243,8 +243,11 @@ describe("integrations without keys", () => {
     expect((await v.json()).error.code).toBe("voice_not_configured");
     cookieToken = adminToken;
     const a = await adminAssistant.POST(areq("/api/admin/assistant", "POST", { question: "Which ghat has room?" }));
-    expect(a.status).toBe(503);
-    expect((await a.json()).error.code).toBe("assistant_not_configured");
+    // Without an AI key Sahayak still answers, from live numbers only, and says it's the built-in mode.
+    expect(a.status).toBe(200);
+    const body = await a.json();
+    expect(body.mode).toBe("builtin");
+    expect(body.answer).toMatch(/No crowd numbers yet|room/);
   });
 });
 

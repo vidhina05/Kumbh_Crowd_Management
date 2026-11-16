@@ -98,7 +98,7 @@ export default function KioskApp() {
   const [speaking, setSpeaking] = useState(false);
   const [autoRead, setAutoRead] = useState(true);
   const [voiceUsed, setVoiceUsed] = useState<SpokenWith | null>(null);
-  const [voicesLoaded, setVoicesLoaded] = useState(0);
+  const [voicesLoaded, setVoicesLoaded] = useState(-1); // -1 until mounted, so server and first client render match
   const [hearing, setHearing] = useState(false);
   const [heard, setHeard] = useState<string | null>(null);
   const touched = useRef(false);
@@ -236,7 +236,8 @@ export default function KioskApp() {
   const langInfo = LANGUAGES.find((l) => l.code === lang)!;
   const serverVoice = Boolean(config?.integrations.voice);
   const voiceAvailable = serverVoice || (voicesLoaded >= 0 && typeof window !== "undefined" && Boolean(browserVoiceFor(lang)));
-  const ghatName = (g: { name: string; nameHi: string }) => (lang === "en" ? g.name : g.nameHi || g.name);
+  // Ghat names exist in English and Hindi; Devanagari-script languages get the Hindi name, everyone else the English one.
+  const ghatName = (g: { name: string; nameHi: string }) => (langInfo.script === "Deva" ? g.nameHi || g.name : g.name);
 
   const toggleTheme = () => {
     const next = theme === "dark" ? "light" : "dark";
@@ -450,7 +451,7 @@ export default function KioskApp() {
         <div className="k-spacer" />
         {inRegistration && step && <StepBar step={step} t={t} />}
         <div className="k-spacer" />
-        {canListen(serverVoice) && (
+        {voicesLoaded >= 0 && canListen(serverVoice) && (
           <button className={`k-listen${hearing ? " on" : ""}`} onClick={hearCommand} aria-pressed={hearing} title={heard ? t("heardYou", { text: heard }) : t("micOff")}>
             <span className="dot" /><Icon name="mic" size="sm" />{(screen === "welcome" || screen === "allLangs" || hearing) && <span>{hearing ? t("listeningSay") : t("micOff")}</span>}
           </button>
@@ -532,7 +533,7 @@ export default function KioskApp() {
               <img className="k-art sm" src={`${BASE_PATH}/art/dwar.png`} alt="" />
             </>
           )}
-          {voiceAvailable ? (
+          {voicesLoaded < 0 && !serverVoice ? <div style={{ marginTop: "auto" }} /> : voiceAvailable ? (
             <button className={`k-voice${speaking ? " speaking" : ""}`} onClick={() => void readAloud()} aria-pressed={speaking} aria-label={speaking ? t("stopReading") : t("readAloud")}>
               <span className="orb"><Icon name={speaking ? "graphic_eq" : "volume_up"} /></span>
               <span className="tx"><b>{speaking ? t("readingAloud") : t("tapToHear")}</b><span className="t">{guide.body}</span>{voiceUsed?.how === "browser" && !voiceUsed.exact && <small>{t("voiceVia", { name: voiceUsed.voiceName ?? "" })}</small>}</span>
@@ -978,7 +979,7 @@ function CrowdPanel({ config, t, ghatName }: { config: Config | null; t: (k: Dic
     <div className="k-live">
       <div className="k-live-head"><span className="dot" /><b>{t("liveAtMela")}</b></div>
       <div className="k-crowd">
-        {config.ghats.map((g) => (
+        {[...config.ghats].sort((a, b) => Number(a.updatedMinutesAgo === null) - Number(b.updatedMinutesAgo === null)).slice(0, 4).map((g) => (
           <div className="tile" key={g.id}>
             <div style={{ fontSize: 13 }}>{ghatName(g)}</div>
             {g.updatedMinutesAgo === null ? (
@@ -1030,7 +1031,7 @@ function SlotPicker({ t, lang, today, day, data, people, chosen, onChoose, busy,
                 <span className="radio" aria-hidden="true" />
                 <span className="t">
                   <b>{ghatName(g)}</b>
-                  <small>{first ? `${first.start}–${first.end}` : t("noSlots")} · {g.gate} · {g.walkNote}</small>
+                  <small>{first ? `${first.start}–${first.end}` : t("noSlots")} · {t("gate")} {g.gate.replace(/\D/g, "") || g.gate} · {g.walkNote}</small>
                   {g.crowd.updatedMinutesAgo !== null && <span className="bar"><i className={`level-${g.crowd.level}-bg`} style={{ width: `${Math.min(100, g.crowd.percent)}%` }} /></span>}
                 </span>
                 {g.crowd.updatedMinutesAgo !== null && <span className={`chip ${level}`}><span className="dot" /> {t(levelKey(g.crowd.level))}</span>}
@@ -1065,7 +1066,7 @@ function SlotPicker({ t, lang, today, day, data, people, chosen, onChoose, busy,
 }
 
 function PassView({ pass, qr, t, lang, today }: { pass: Pass; qr: string; t: (k: DictKey, v?: Record<string, string | number>) => string; lang: LangCode; today: string }) {
-  const ghat = lang === "en" ? pass.ghat.name : pass.ghat.nameHi || pass.ghat.name;
+  const ghat = LANGUAGES.find((l) => l.code === lang)?.script === "Deva" ? pass.ghat.nameHi || pass.ghat.name : pass.ghat.name;
   const gateNo = pass.ghat.gate.replace(/\D/g, "") || pass.ghat.gate;
   const bands = pass.members.filter((m) => m.hasBand);
   // Slot start in IST → minutes from now.
@@ -1073,6 +1074,7 @@ function PassView({ pass, qr, t, lang, today }: { pass: Pass; qr: string; t: (k:
   useEffect(() => { const iv = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(iv); }, []);
   const startMs = Date.parse(`${pass.slot.day}T${pass.slot.start}:00+05:30`);
   const mins = Math.max(0, Math.round((startMs - now) / 60_000));
+  const unit = (n: number, u: "hour" | "minute") => { try { return new Intl.NumberFormat(`${lang}-IN`, { style: "unit", unit: u, unitDisplay: "short" }).format(n); } catch { return `${n} ${u === "hour" ? "h" : "min"}`; } };
   const leave = new Date(startMs - 30 * 60_000).toLocaleTimeString(lang === "en" ? "en-IN" : `${lang}-IN`, { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
   return (
     <div className="printable k-passwrap">
@@ -1101,7 +1103,7 @@ function PassView({ pass, qr, t, lang, today }: { pass: Pass; qr: string; t: (k:
           <div className="pic" style={{ backgroundImage: `url(${BASE_PATH}/art/aerial-light.jpg)` }}><span className="you">{ghat} · {t("gate")} {gateNo}</span></div>
           <div>
             <small className="muted">{t("slotStartsIn")}</small>
-            <div className="big" style={{ color: "var(--primary)" }}>{mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`}</div>
+            <div className="big" style={{ color: "var(--primary)" }}>{mins >= 60 ? `${unit(Math.floor(mins / 60), "hour")} ${unit(mins % 60, "minute")}` : unit(mins, "minute")}</div>
             <small className="muted">{t("leaveBy", { time: leave })}</small>
           </div>
         </div>

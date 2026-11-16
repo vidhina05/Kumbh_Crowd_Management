@@ -126,6 +126,10 @@ async function handle(input: Request): Promise<Response> {
       const jar = loadJar();
       setRequestContext({ cookies: jar });
       const res = await fn(req, { params: Promise.resolve(params) });
+      // Store changes in IndexedDB before answering, so a page change right after can't lose them.
+      const { flushToDisk } = await import("./db-browser");
+      if (["GET", "HEAD"].includes(input.method.toUpperCase())) void flushToDisk().catch(() => undefined);
+      else await flushToDisk();
       if (res instanceof NextResponse && res.setCookies.length) {
         for (const c of res.setCookies) {
           if (!c.value || c.maxAge === 0) jar.delete(c.name);

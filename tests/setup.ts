@@ -9,6 +9,7 @@ process.env.SESSION_SECRET = randomBytes(32).toString("base64");
 process.env.CRON_SECRET = randomBytes(24).toString("hex");
 process.env.OTP_DEV_MODE = "true";
 process.env.SMS_PROVIDER = "none";
+process.env.MFA_REQUIRED_ROLES = ""; // two-step sign-in is covered by the browser click-through; these flow tests sign in with a password only
 delete process.env.BHASHINI_USER_ID;
 delete process.env.BHASHINI_API_KEY;
 delete process.env.GEMINI_API_KEY;

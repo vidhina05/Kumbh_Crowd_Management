@@ -17,8 +17,22 @@ self.addEventListener("unhandledrejection", (e) => {
   if (err?.name === "ErrnoError") e.preventDefault();
 });
 
+let pgRef: PGlite | null = null;
+
+// The page asks for a durable flush after every change it makes (flushToDisk in db-browser.ts). Queries themselves
+// don't wait for IndexedDB, which keeps the big demo seed fast; this message waits for everything written so far.
+self.addEventListener("message", (e: MessageEvent) => {
+  const d = e.data as { type?: string; id?: number } | null;
+  if (!d || d.type !== "sangam-flush") return;
+  const done = () => (self as unknown as Worker).postMessage({ type: "sangam-flushed", id: d.id });
+  const fs = (pgRef as unknown as { fs?: { syncToFs: (relaxed?: boolean) => Promise<void> } } | null)?.fs;
+  if (!fs) return done();
+  fs.syncToFs(false).then(done, done);
+});
+
 void worker({
   async init(options) {
-    return new PGlite({ dataDir: options.dataDir, relaxedDurability: true });
+    pgRef = new PGlite({ dataDir: options.dataDir, relaxedDurability: true });
+    return pgRef;
   },
 });

@@ -1,13 +1,15 @@
 # Sangam Seva · Maha Kumbh crowd management
 
-Two connected products built from the Figma designs:
+**Live demo: https://vidhina05.github.io/Kumbh_Crowd_Management/** — runs entirely in your browser (database included), with invented data and simulated sensors. Nothing you type leaves your device. Use **Reset demo** (bottom-right) to start fresh.
 
-- **Registration kiosk** (`/kiosk`): pilgrims register their family for a safe bathing slot in 10 Indian languages, get a pass with a QR code and wristbands, ask for help or report a missing person. Works by touch, with voice when connected.
-- **Control room** (`/admin`): staff see today's registrations and crowd levels, work help requests and lost-person cases, publish alerts to kiosks, manage kiosks and staff. Role-based, every action logged.
+Built from the Figma file (*UI · Admin* and *UI · Kiosk* pages), screen by screen:
 
-One Next.js app holds the kiosk, the admin dashboard and the API, backed by Postgres. It deploys straight from GitHub to a live link on Vercel.
+- **Registration kiosk** (`/kiosk`): a family registers for a safe bathing slot in **any of 24 languages** — the 22 languages of the Eighth Schedule, English and Bhojpuri — and the whole screen, including right-to-left Urdu, Kashmiri and Sindhi, switches. Each screen is **read aloud in the chosen language**. Identity by **Aadhaar Secure QR** (UIDAI signature checked) or a phone code; optional, consented **face matching** to find a separated family member or a lost pass. Pass with QR and wristbands, help requests, missing-person reports, "Find me", offline outbox.
+- **Control room** (`/admin`): staff sign in with their staff ID and **face scan** (opt-in, 1:1) or PIN/password, plus a 6-digit code where required; pick a command post and start a shift. Live aerial map in 2D/3D with crowd pins from **crowd sensors and camera counters**, ghat detail with replay and forecast, batch plan, two-person **diversions** that reach families on the kiosk and their phone, families, help requests with nearest-helper dispatch, lost & found with face search, multilingual alerts, shift report and handover, Sahayak assistant, wall view, settings sheet.
+- **Camera crowd counter** (`/camera`): any phone or webcam counts faces in view on the device and posts only the number. It never identifies anyone.
+- **My pass** (`/pass`): a pilgrim checks their pass and any ghat change on their own phone.
 
-> Status: core features are built and tested (31 automated API/unit tests, 27 browser journeys). Voice (Bhashini), the Sahayak assistant (Gemini) and SMS (MSG91) are wired in but **not connected until you add keys**. Until then the app says so on screen; it never fakes them. See [What's not done yet](#whats-not-done-yet).
+> **Status.** Every screen above works end to end in the live demo and passes a 36-step browser click-through (see [Tests](#tests)). Services that need your accounts — Bhashini (server voice), Gemini (Sahayak AI), MSG91 (SMS) and the UIDAI certificate — are wired in and **say "not connected" on screen until you add keys**; nothing is faked. Translations other than English are drafts awaiting native-speaker review.
 
 ## How it fits together
 
@@ -85,16 +87,15 @@ Every push to `main` redeploys. Pull requests get preview links.
 
 | Service | What it turns on | How to get keys | Env vars |
 |---|---|---|---|
-| **Bhashini** (Govt. of India, free) | Read-aloud and voice typing in Indian languages | Register at bhashini.gov.in/ulca → My Profile → API key | `BHASHINI_USER_ID`, `BHASHINI_API_KEY` |
-| **Google Gemini** | Sahayak, the control-room assistant | aistudio.google.com/apikey | `GEMINI_API_KEY` (`GEMINI_MODEL` defaults to `gemini-2.5-flash`) |
-| **MSG91** | SMS phone codes | msg91.com, then DLT registration of a template with `##OTP##` | `SMS_PROVIDER=msg91`, `MSG91_AUTH_KEY`, `MSG91_TEMPLATE_ID` |
+| **Bhashini** (Govt. of India, free) | Server voice in all 22 scheduled languages (read-aloud and voice input) | bhashini.gov.in/ulca → My Profile → API key | `BHASHINI_USER_ID`, `BHASHINI_API_KEY` |
+| **Google Gemini** | Sahayak answers in plain language (without it, Sahayak still answers from live numbers) | aistudio.google.com/apikey | `GEMINI_API_KEY` |
+| **MSG91** | SMS codes, pass, diversion and thank-you messages | msg91.com + DLT-registered templates | `SMS_PROVIDER=msg91`, `MSG91_*` |
+| **UIDAI certificate** | Real Aadhaar Secure QR verification | uidai.gov.in (offline verification) | `AADHAAR_UIDAI_CERT_PEM` |
+| **Upstash Redis** | Rate limits shared across server instances | upstash.com (free tier) | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` |
 
-After adding keys, redeploy, then check:
-- **Voice:** on the kiosk, the guide pane shows **Read aloud** instead of "Voice is not available", and the help text box shows **Speak**.
-- **Sahayak:** Admin → **Ask Sahayak** answers instead of "not connected".
-- **SMS:** register with your own number; the code arrives by SMS and is not shown on screen.
+**Voice without Bhashini.** The kiosk uses the device's own voices: the exact language if the device has it, otherwise a voice that reads the same script (a Hindi voice for Maithili, Sanskrit, Bhojpuri, Dogri, Konkani, Nepali and Bodo; an Urdu voice for Kashmiri and Sindhi), and says which voice it used. If a device has no suitable voice, the kiosk says so and shows everything on screen. Chrome on Android and Windows has Indian-language voices for Hindi, Bengali, Tamil, Telugu, Kannada, Malayalam, Marathi, Gujarati, Urdu and others; Odia, Assamese, Manipuri and Santali usually need Bhashini. Voice input uses Bhashini when configured, otherwise the browser's recognizer (Chrome sends that audio to Google).
 
-These three integrations follow each provider's published API, but they have **not been tested against the live services** (no keys were available while building). Test them with real keys before the event.
+These integrations follow each provider's published API, but they have **not been tested against the live services** (no keys were available). Test them with real keys before the event.
 
 ## Roles
 
@@ -112,13 +113,13 @@ Roles are checked on the server for every API call; hiding a button is never the
 
 ```bash
 npm run typecheck
-npm test                      # 31 unit + API tests on an in-memory database
-npm run build && npm run test:e2e   # 27 journeys in Chrome (set CHROME_PATH if Chrome isn't at /usr/bin/google-chrome)
-npm run lint:secrets          # blocks commits that contain keys, passwords or .env files
+npm test                       # unit + API tests, including all 24 dictionaries (every key, every placeholder)
+npm run build:pages            # the static demo in ./out
+SITE=http://localhost:8765/Kumbh_Crowd_Management node tests/e2e/clickthrough.mjs   # 36-step click-through in Chrome
 npm audit
 ```
 
-What the browser tests cover: kiosk setup; registering a family of three with a camera photo; choosing a slot; the pass and QR code; medical help; a missing child; a help request made **offline** that's sent when the connection returns; "Find me" and a slot change; switching to Tamil and English; admin sign-in and wrong password; the family appearing in the dashboard with its wristbands and source kiosk; working a help request to resolved; a lost-child case linked to the family's photo and reunited, with the photo view logged; an alert reaching the kiosk; kiosk online status; Sahayak saying it's not connected; dark theme; a help-desk account blocked from staff management; phone-width layouts.
+The click-through registers a family with an Aadhaar test card and a face template, books a slot, finds the pass again by QR and by face, takes the phone-code path, sends help and a missing-person report, switches through all 24 languages (checking text and right-to-left), signs into the control room, holds and reopens a gate, uses the 2D/3D map, plans a diversion that the same person can't approve, approves it as someone else, sees it on the kiosk and the public pass page, registers a sensor and counts faces from a camera, runs a face search in lost & found through to reunion, hands over a shift, asks Sahayak, opens every page, dispatches a helper, changes settings, turns on two-step sign-in and signs in with it, checks a help-desk account's limits, and resets the demo. Camera tests use fake video feeds (`FACE_FEED`, `FACE_JPG`, `CROWD_FEED`).
 
 ## Project layout
 
@@ -129,7 +130,7 @@ src/app/api            API routes (kiosk, admin, voice, cron, health)
 src/kiosk              kiosk UI, offline outbox, voice
 src/admin              dashboard shell, polling, case tools
 src/server             config, crypto, auth, database, services, integrations
-src/i18n               kiosk text in 10 languages
+src/i18n               kiosk text in 24 languages (one complete dictionary each)
 src/shared             roles, validation, languages, time helpers
 migrations             SQL migrations (source of truth for the schema)
 scripts                migrate, seed, secret check
@@ -139,16 +140,12 @@ docs                   architecture, API, security, AI and language decisions
 
 ## What's not done yet
 
-Built and tested: everything above. Not done, by decision or because it needs you:
-
-- **Live keys** for Bhashini, Gemini and MSG91 (see above). Without SMS, phone codes can't be delivered in production; staff can still help pilgrims who can't verify.
-- **Aadhaar scanning** (shown in the Figma kiosk) is not built. Reading Aadhaar needs a UIDAI-licensed partner (AUA/KUA). The kiosk uses phone verification instead.
-- **Face recognition** is deliberately not built. Photos of children are taken only with consent, encrypted, shown to staff only for an open lost-child case, and deleted 48 h after the slot. Why, and how to add consent-based face verification later: [docs/AI-LANGUAGES-KIOSK.md](docs/AI-LANGUAGES-KIOSK.md#face-recognition).
-- **Crowd numbers are entered by staff.** No sensors or camera analytics are connected, and the dashboard says so with the time of each entry.
-- **Translations:** English is the source. The other 9 languages are complete drafts that need review by native speakers before launch. Kiosk alerts are shown in the language staff type them in.
-- **Real-time updates** use 10-second polling, which is simple and reliable on serverless hosting. Push (WebSockets) can come later.
-- **Rate limits** are kept in memory per server instance; add a shared store (e.g. Upstash Redis) when running many instances. Login lockout and OTP limits are already stored in the database.
-- **Pass printing** uses the browser's print dialog; a kiosk needs its printer set as default in kiosk mode. Wristband IDs are generated by the server; a real dispenser would scan its own IDs.
-- Screens from the Figma file not yet built: Admin batch plan, diversion planner, 3D view, shift report and wall view; Kiosk Aadhaar scan.
+- **Live keys** for Bhashini, Gemini, MSG91 and the UIDAI certificate (see above).
+- **Native-speaker review** of the 23 non-English dictionaries. Bodo, Kashmiri, Sindhi, Manipuri (Meetei Mayek) and Santali (Ol Chiki) need the most care. Ghat names and walking notes come from the database in English and Hindi only; non-Devanagari languages show the English name.
+- **Wristband hardware.** Wristband IDs are generated; there's no pairing with a real band or dispenser, so the kiosk says "gets a wristband" rather than "band connected".
+- **Crowd sensors** are an open HTTP ingest API with per-device keys; the demo uses a labelled simulator and the camera counter. Real gate counters need integrating with that API.
+- **Face recognition** is opt-in and 1:1 / opted-in families only: staff sign-in and the find-me / lost-and-found search. There is deliberately no crowd-wide face identification.
+- **Real-time** uses polling (5–10 s); push can come later.
+- **Load and penetration testing** haven't been done.
 
 Security review and pre-push checklist: [docs/SECURITY.md](docs/SECURITY.md).

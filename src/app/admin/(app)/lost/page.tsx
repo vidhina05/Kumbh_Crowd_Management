@@ -59,6 +59,8 @@ function LostPage() {
     setPhoto(URL.createObjectURL(await res.blob()));
   };
 
+  // A case that changes state (e.g. reunited) can leave the current filter; keep showing it by switching to All.
+  useEffect(() => { if (sel && data && !data.cases.some((x) => x.id === sel) && status !== "") setStatus(""); }, [sel, data, status]);
   const mins = (iso: string) => Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000));
   const ini = (n: string) => n.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   const STATUS_TXT: Record<string, string> = { open: "Reported", searching: "Searching", found: "Found", reunited: "Reunited", closed: "Closed" };
