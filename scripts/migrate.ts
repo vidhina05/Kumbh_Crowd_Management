@@ -2,6 +2,7 @@
  * Applies migrations/*.sql in order. Safe to run on every deploy (already-applied files are skipped).
  *   npm run db:migrate
  */
+import "./load-env";
 import { getConn, migrate } from "../src/server/db";
 
 async function main() {

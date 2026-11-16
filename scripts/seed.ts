@@ -7,6 +7,7 @@
  * The kiosk device token is printed ONCE. Copy it into the kiosk's setup screen; it can't be shown again
  * (a super admin can issue a new one from Admin → Kiosks).
  */
+import "./load-env";
 import { ensureKiosk, ensureSuperAdmin, seedReferenceData } from "../src/server/seed";
 
 async function main() {

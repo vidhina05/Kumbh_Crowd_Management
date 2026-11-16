@@ -54,11 +54,24 @@ cp .env.example .env.local
 # Fill the four secrets in .env.local:
 #   openssl rand -base64 32   (three times: DATA_ENCRYPTION_KEY, LOOKUP_HMAC_KEY, SESSION_SECRET)
 #   openssl rand -hex 24      (CRON_SECRET)
-# For local testing set OTP_DEV_MODE=true so phone codes show on screen.
+# For local testing also set OTP_DEV_MODE=true (phone codes show on screen),
+# AADHAAR_ALLOW_TEST_CARDS=true (sample Aadhaar cards) and SENSOR_SIMULATOR=true (moving crowd numbers),
+# and put your own SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD in the file.
 
-SEED_ADMIN_EMAIL=you@example.org SEED_ADMIN_PASSWORD='choose-a-long-password-1' npm run setup
+npm run setup
 npm run dev
 ```
+
+On Windows (PowerShell), make the keys with:
+
+```powershell
+# three base64 keys (DATA_ENCRYPTION_KEY, LOOKUP_HMAC_KEY, SESSION_SECRET): 44 characters, ending in =
+1..3 | % { $b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b) }
+# CRON_SECRET: 48 hex characters
+-join (1..24 | % { '{0:x2}' -f (Get-Random -Max 256) })
+```
+
+`npm run setup` reads `.env.local` (or `.env`) by itself.
 
 `npm run setup` creates the tables, five ghats with bathing slots for 8 days, your super-admin account and kiosk **K-17**. It prints K-17's device token once. Then:
 
