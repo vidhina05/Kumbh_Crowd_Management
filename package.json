@@ -22,7 +22,7 @@
     "build:pages": "node scripts/copy-models.mjs && node scripts/build-pages.mjs"
   },
   "dependencies": {
-    "@electric-sql/pglite": "^0.5.16",
+    "@electric-sql/pglite": "^0.5.17",
     "@fontsource/anton": "^5.3.0",
     "@fontsource/inter": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
